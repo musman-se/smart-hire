@@ -1,0 +1,1 @@
+"""SmartHire backend application package."""

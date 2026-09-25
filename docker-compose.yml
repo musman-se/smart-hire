@@ -1,0 +1,81 @@
+# SmartHire — full local stack.
+#
+#   docker compose up --build     start Postgres, run migrations, serve API and web
+#   docker compose down           stop, keeping data
+#   docker compose down -v        stop and wipe the database volume
+#
+# Startup order is enforced, not hoped for: db must report healthy, then migrate must
+# exit 0, and only then does api start. web depends on api.
+
+name: smarthire
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: smarthire-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-smarthire}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smarthire}
+      POSTGRES_DB: ${POSTGRES_DB:-smarthire}
+    ports:
+      # Exposed so the test suite and a GUI client can reach it from the host.
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smarthire} -d ${POSTGRES_DB:-smarthire}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # One-shot: brings the schema up to date, then exits. Running migrations as a distinct
+  # step — rather than in the API's startup hook — means a failed migration stops the
+  # deploy instead of leaving a half-migrated app serving, and it runs once rather than
+  # once per API replica.
+  migrate:
+    build: ./backend
+    container_name: smarthire-migrate
+    command: alembic upgrade head
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-smarthire}:${POSTGRES_PASSWORD:-smarthire}@db:5432/${POSTGRES_DB:-smarthire}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: ./backend
+    container_name: smarthire-api
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      ENVIRONMENT: docker
+      # Host is "db", the service name — containers resolve each other by service name on
+      # the Compose network. "localhost" inside a container means the container itself.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-smarthire}:${POSTGRES_PASSWORD:-smarthire}@db:5432/${POSTGRES_DB:-smarthire}
+    ports:
+      - "8000:8000"
+    volumes:
+      # Bind mount so --reload picks up edits without a rebuild.
+      - ./backend/app:/code/app
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # Static build served by nginx, which also proxies /api to the api service. Same origin
+  # for app and API, so the project needs no CORS configuration anywhere.
+  web:
+    build: ./frontend
+    container_name: smarthire-web
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
