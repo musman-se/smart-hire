@@ -33,7 +33,7 @@ the moment to reconsider — and it would be a separate surface, not a rewrite o
 ### Dev — against a local API
 
 ```bash
-docker compose up -d db migrate api   # from the repo root
+docker compose up -d db migrate api temporal worker redis   # from the repo root
 npm install
 npm run dev                            # http://localhost:5173
 ```
@@ -67,6 +67,30 @@ The one deliberate duplication is `NEXT_STAGES` in `types.ts`, which mirrors
 the server remains the only thing that enforces it. A client copy that drifts can only
 ever show a wrong button — it can never let an illegal transition through.
 
+## Asynchronous state (Module 2)
+
+Since Module 2, two things the console shows finish *after* the request that started
+them: publishing (a Temporal workflow — `POST /publish` answers 202 with the job in
+`processing`) and an application's score and confirmation (the ProcessApplication
+workflow). The console polls rather than waiting:
+
+| What | Polls | Stops |
+|---|---|---|
+| A job (`useJob`) | every 1 s | when the status leaves `processing` |
+| Publishing status (`useJobPublication`) | every 1 s, for the live step | with the job |
+| A job's applications (`useJobApplications`) | every 1.5 s | when every active application has a score, or after 20 tries — a stopped worker must not mean polling forever |
+
+Polling, not WebSockets: the waits are seconds long, a handful of clients watch them, and
+polling needs nothing new on the server. Push becomes worth it with Module 3's events.
+
+**Idempotency keys.** Applying and creating a job send an `Idempotency-Key`.
+`useIdempotencyKey(input)` keeps the key stable while the form input is unchanged, so
+pressing Submit again after a timeout resends the same key and the backend replays its
+first answer instead of acting twice; any change to the input makes a new key.
+
+**Temporal UI.** The publishing panel links each run to the Temporal UI at
+`VITE_TEMPORAL_UI_URL` (default `http://localhost:8233`), in the `default` namespace.
+
 ## Errors are the interesting part
 
 The backend returns one envelope for every failure:
@@ -92,7 +116,9 @@ src/
 │   ├── types.ts       friendly aliases over the generated types
 │   ├── client.ts      fetch wrapper, error envelope, ApiError
 │   └── resources.ts   one function per endpoint, no React
-├── hooks/queries.ts   TanStack Query hooks and cache keys
+├── hooks/
+│   ├── queries.ts            TanStack Query hooks, cache keys, polling rules
+│   └── useIdempotencyKey.ts  one key per intended action
 ├── components/        Layout, pills, modal, pagination, error notice
 └── pages/             Jobs, JobDetail, Candidates, CandidateDetail
 ```
@@ -104,6 +130,11 @@ mounting components.
 
 **Node version.** Vite is pinned to 6.x because this machine runs Node 22.11.0, and Vite
 7+ requires 20.19+ or 22.12+. On Node 22.12 or newer, Vite can move up.
+
+**nginx and recreated containers.** The proxy target in `nginx.conf.template` is a
+variable resolved through Docker's DNS at request time. A literal hostname is resolved
+once at startup, so recreating the `api` container (new IP) used to break `/api` with
+502s until `web` was restarted too.
 
 **npm and TLS inspection.** The corporate network inspects TLS, so `npm install` inside a
 container fails with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` — the container does not trust
