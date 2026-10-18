@@ -350,8 +350,9 @@ function PublishingPanel({ job }: { job: Job }) {
       {job.status === "publish_failed" && (
         <div className="notice notice-error">
           <strong>Publishing failed — the job is not live</strong>
-          {job.publish_error ?? "No reason was recorded."} Fix the job if needed, then publish
-          again.
+          <span className="mono">{job.publish_error ?? "No reason was recorded."}</span>
+          <br />
+          Fix the job if needed, then publish again.
         </div>
       )}
 
@@ -547,7 +548,9 @@ export function JobDetailPage() {
               <dd>{job.employment_type?.replace("_", " ")}</dd>
 
               <dt>Min. experience</dt>
-              <dd>{job.min_experience_years} years</dd>
+              <dd>
+                {job.min_experience_years} year{job.min_experience_years === 1 ? "" : "s"}
+              </dd>
 
               <dt>Cap</dt>
               <dd>{job.max_applications ?? "Unlimited"}</dd>
