@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { ApiError } from "../api/client";
 import {
   NEXT_STAGES,
   TERMINAL_STAGES,
@@ -45,8 +46,9 @@ const TEMPORAL_UI_URL = import.meta.env.VITE_TEMPORAL_UI_URL ?? "http://localhos
 function ApplyPanel({ jobId, jobSkills }: { jobId: string; jobSkills: string[] }) {
   const [candidateId, setCandidateId] = useState("");
   const [coverLetter, setCoverLetter] = useState("");
-  // Same input, same key: pressing Submit again after a timeout cannot apply twice.
-  const idempotencyKey = useIdempotencyKey({ jobId, candidateId, coverLetter });
+  // Same input and no answer yet: same key, so re-pressing Submit after a timeout
+  // cannot apply twice. Any answer settles the key; the next submit gets a fresh one.
+  const { key: idempotencyKey, settle } = useIdempotencyKey({ jobId, candidateId, coverLetter });
 
   // A long candidate list would need a search-as-you-type picker; at this scale a
   // single page of 100 is honest and simple.
@@ -65,6 +67,7 @@ function ApplyPanel({ jobId, jobSkills }: { jobId: string; jobSkills: string[] }
         idempotencyKey,
       },
       {
+        onSettled: (_data, error) => settle(error),
         onSuccess: () => {
           setCandidateId("");
           setCoverLetter("");
@@ -170,15 +173,22 @@ function MatchScore({ application }: { application: Application }) {
   // (the engine was down). The button is the recovery path either way, and safe to
   // press twice — scoring is recomputed and the confirmation never sent twice.
   return (
-    <button
-      type="button"
-      className="small ghost"
-      title="Run scoring and the confirmation message (POST /applications/{id}/process)"
-      disabled={process.isPending}
-      onClick={() => process.mutate(application.id)}
-    >
-      {process.isPending ? "…" : "score"}
-    </button>
+    <>
+      <button
+        type="button"
+        className="small ghost"
+        title="Run scoring and the confirmation message (POST /applications/{id}/process)"
+        disabled={process.isPending}
+        onClick={() => process.mutate(application.id)}
+      >
+        {process.isPending ? "…" : "score"}
+      </button>
+      {process.error && (
+        <span className="inline-error" title={process.error.message}>
+          {process.error instanceof ApiError ? process.error.code : "failed"}
+        </span>
+      )}
+    </>
   );
 }
 
@@ -318,9 +328,14 @@ const PUBLISH_STEPS = [
  */
 function PublishingPanel({ job }: { job: Job }) {
   const processing = job.status === "processing";
-  const { data: publication } = useJobPublication(job.id, processing);
+  const { data: publication, isFetched } = useJobPublication(job.id, job.status);
+  const transition = useJobTransition(job.id);
   const run = publication?.workflow;
   const currentIndex = PUBLISH_STEPS.findIndex((s) => s.step === run?.current_step);
+  // PROCESSING with no run in flight: the run ended without finishing the job, or never
+  // started (the engine went down at the wrong moment). Publishing again starts a
+  // fresh run — the documented recovery, offered right here.
+  const stuck = processing && isFetched && run?.status !== "running";
 
   if (!run && !processing && job.status !== "publish_failed") return null;
 
@@ -345,6 +360,24 @@ function PublishingPanel({ job }: { job: Job }) {
             </li>
           ))}
         </ol>
+      )}
+
+      {stuck && (
+        <div className="notice notice-rule">
+          <strong>No workflow is running for this job</strong>
+          It is still marked processing, but its last run {run ? `is ${run.status}` : "never started"}.
+          <div style={{ marginTop: "0.5rem" }}>
+            <button
+              type="button"
+              className="primary small"
+              disabled={transition.isPending}
+              onClick={() => transition.mutate("publish")}
+            >
+              Restart publishing
+            </button>
+          </div>
+          <ErrorNotice error={transition.error} />
+        </div>
       )}
 
       {job.status === "publish_failed" && (

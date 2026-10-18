@@ -32,7 +32,9 @@ export const keys = {
   jobList: (filters: JobFilters) => ["jobs", "list", filters] as const,
   job: (id: string) => ["jobs", "detail", id] as const,
   // Under the "jobs" prefix, so invalidating jobs refreshes these too.
-  publication: (id: string) => ["jobs", "publication", id] as const,
+  // Keyed by the job's status too, so the workflow's state is re-read the moment the
+  // job's changes — otherwise the last poll ("running") outlived the run.
+  publication: (id: string, status: string) => ["jobs", "publication", id, status] as const,
   content: (id: string, processedAt: string | null | undefined) =>
     ["jobs", "content", id, processedAt] as const,
 
@@ -74,11 +76,11 @@ export function useJob(id: string) {
 }
 
 /** The workflow's own view: live step while running, final status after. */
-export function useJobPublication(id: string, processing: boolean) {
+export function useJobPublication(id: string, jobStatus: string) {
   return useQuery({
-    queryKey: keys.publication(id),
+    queryKey: keys.publication(id, jobStatus),
     queryFn: () => jobsApi.publication(id),
-    refetchInterval: processing ? 1000 : false,
+    refetchInterval: jobStatus === "processing" ? 1000 : false,
   });
 }
 
@@ -164,18 +166,28 @@ export function useDeleteCandidate() {
 
 // --- Applications ----------------------------------------------------------------
 
+/** How long after an application is created its score is worth waiting for. */
+const SCORE_WAIT_MS = 60_000;
+
 /** Scores arrive a moment after the application, from the ProcessApplication
- * workflow. Poll while an active application is still unscored — but give up after
- * 20 tries, so a stopped worker does not mean polling forever. */
+ * workflow. Poll while an active application created in the last minute is still
+ * unscored. Bounded per application rather than by a lifetime counter — a counter ran
+ * out once and then never polled again, however many applications came later. An
+ * older unscored application means processing never ran; its "score" button is the
+ * way to recover it. */
 export function useJobApplications(jobId: string) {
   return useQuery({
     queryKey: keys.jobApplications(jobId),
     queryFn: () => applicationsApi.forJob(jobId, { limit: 100 }),
     refetchInterval: (query) => {
+      const now = Date.now();
       const awaitingScore = query.state.data?.items.some(
-        (a) => a.match_score === null && !TERMINAL_STAGES.has(a.stage),
+        (a) =>
+          a.match_score === null &&
+          !TERMINAL_STAGES.has(a.stage) &&
+          now - Date.parse(a.created_at) < SCORE_WAIT_MS,
       );
-      return awaitingScore && query.state.dataUpdateCount < 20 ? 1500 : false;
+      return awaitingScore ? 1500 : false;
     },
   });
 }
@@ -217,12 +229,18 @@ export function useApplicationNotifications(applicationId: string, enabled: bool
   });
 }
 
-/** Re-runs scoring and the confirmation — the recovery path after an outage. */
+/** Re-runs scoring and the confirmation — the recovery path after an outage. The
+ * work happens in the worker after the 202, so the lists are re-read a few times as
+ * it lands. */
 export function useProcessApplication() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => applicationsApi.process(id),
-    onSuccess: () => client.invalidateQueries({ queryKey: keys.applications }),
+    onSuccess: () => {
+      for (const delay of [0, 1500, 4000]) {
+        setTimeout(() => client.invalidateQueries({ queryKey: keys.applications }), delay);
+      }
+    },
   });
 }
 
