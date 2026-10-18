@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     # Zero outside a demo.
     publishing_fault_rate: float = Field(default=0.0, ge=0.0, le=1.0)
 
+    # --- Application processing workflow ---------------------------------------------
+    # Attempts per activity (scoring, the confirmation message) before giving up.
+    application_processing_max_attempts: int = Field(default=5, ge=1, le=20)
+
     # --- Business rules ------------------------------------------------------------
     # How many applications a candidate may have open at once. Applications in a terminal
     # stage (hired, rejected) do not count, so a rejected candidate is not locked out.

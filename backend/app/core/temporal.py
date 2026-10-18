@@ -12,15 +12,35 @@ Temporal server is still booting or briefly down.
 import asyncio
 import logging
 
+from fastapi import status
 from temporalio.client import Client
 from temporalio.service import RPCError
 
 from app.core.config import settings
+from app.core.errors import DomainError
 
 logger = logging.getLogger(__name__)
 
 _client: Client | None = None
 _lock = asyncio.Lock()
+
+
+class WorkflowUnavailableError(DomainError):
+    """Temporal could not be reached, so no workflow was started.
+
+    503, not 500: the request was fine and the API is fine; a dependency is down, and
+    the same request will work once it is back.
+    """
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    code = "workflow_unavailable"
+
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(
+            message
+            or "The workflow engine is unavailable right now. Nothing was changed; "
+            "try again shortly."
+        )
 
 
 async def get_temporal_client() -> Client:

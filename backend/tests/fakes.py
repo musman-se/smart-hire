@@ -4,8 +4,9 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.applications.activities import ApplicationActivities
+from app.core.temporal import WorkflowUnavailableError
 from app.publishing.activities import MarkFailedInput, PublishingActivities, StoreContentInput
-from app.publishing.errors import WorkflowUnavailableError
 from app.publishing.publisher import WorkflowRun
 
 
@@ -44,3 +45,19 @@ class InlineJobPublisher:
 
     async def describe(self, job_id: uuid.UUID) -> WorkflowRun | None:
         return None
+
+
+class InlineApplicationProcessor:
+    """Stands in for TemporalApplicationProcessor: runs both activities inline."""
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self.activities = ApplicationActivities(session_factory)
+        self.available = True
+        self.starts: list[uuid.UUID] = []
+
+    async def start(self, application_id: uuid.UUID) -> None:
+        if not self.available:
+            raise WorkflowUnavailableError()
+        self.starts.append(application_id)
+        await self.activities.score_application(str(application_id))
+        await self.activities.send_application_received(str(application_id))

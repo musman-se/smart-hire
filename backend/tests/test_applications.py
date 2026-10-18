@@ -29,7 +29,9 @@ async def test_apply_creates_an_application_in_the_applied_stage(client: AsyncCl
     assert application["stage"] == "applied"
     assert application["job_id"] == job["id"]
     assert application["candidate_id"] == candidate["id"]
-    assert application["match_score"] is None  # scored by a worker in a later module
+    # Scoring runs after the 201, in the ProcessApplication workflow, so the response
+    # itself never carries a score.
+    assert application["match_score"] is None
 
 
 # --- Rule 1: duplicate applications ----------------------------------------------

@@ -5,7 +5,7 @@ The API tests run the activities inline. These run the actual workflow: a real w
 server, executing activities against the test database. They prove what only Temporal
 provides — orchestration, retries with backoff, and compensation on failure.
 
-They skip when Temporal is unreachable: `docker compose up -d temporal`.
+They skip when Temporal is unreachable (the `temporal` fixture, in conftest.py).
 """
 
 import asyncio
@@ -26,21 +26,6 @@ from app.publishing import activities as publishing_activities
 from app.publishing.workflow import PublishJobInput, PublishJobWorkflow
 from app.worker import build_worker
 from tests.factories import make_job
-
-
-@pytest_asyncio.fixture
-async def temporal() -> Client:
-    try:
-        client = await asyncio.wait_for(
-            Client.connect(settings.temporal_address, namespace=settings.temporal_namespace),
-            timeout=5,
-        )
-        await asyncio.wait_for(client.service_client.check_health(), timeout=5)
-    except Exception as exc:  # noqa: BLE001 - any failure means "no server to test against"
-        pytest.skip(
-            f"Temporal unreachable ({type(exc).__name__}). Run: docker compose up -d temporal"
-        )
-    return client
 
 
 @pytest_asyncio.fixture

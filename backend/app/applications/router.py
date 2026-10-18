@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from app.applications import service as application_service
 from app.applications.enums import ApplicationStage
+from app.applications.processor import ApplicationProcessorDep, start_processing
 from app.applications.schemas import (
     ApplicationCreate,
     ApplicationRead,
@@ -22,6 +23,8 @@ from app.applications.schemas import (
 from app.core.db import SessionDep
 from app.core.idempotency import IdempotencyDep, IdempotencyKey
 from app.core.pagination import Page, PaginationDep
+from app.notifications import service as notification_service
+from app.notifications.schemas import NotificationRead
 
 # Nested under a job.
 job_applications_router = APIRouter()
@@ -43,6 +46,7 @@ router = APIRouter()
 async def apply_to_job(
     session: SessionDep,
     idempotency: IdempotencyDep,
+    processor: ApplicationProcessorDep,
     request: Request,
     job_id: uuid.UUID,
     payload: ApplicationCreate,
@@ -52,6 +56,10 @@ async def apply_to_job(
     # applied". With an Idempotency-Key, the retry gets the original 201.
     async def apply() -> ApplicationRead:
         application = await application_service.apply_to_job(session, job_id, payload)
+        # Committed: the application is safe. Scoring and the confirmation message run
+        # in the background; if the workflow engine is down they wait for a retry via
+        # POST /applications/{id}/process — the candidate's 201 does not.
+        await start_processing(processor, application.id)
         return ApplicationRead.model_validate(application)
 
     return await idempotency.run(
@@ -132,6 +140,39 @@ async def advance_stage(
 async def get_history(session: SessionDep, application_id: uuid.UUID) -> list[StageChangeRead]:
     changes = await application_service.get_history(session, application_id)
     return [StageChangeRead.model_validate(change) for change in changes]
+
+
+@router.post(
+    "/{application_id}/process",
+    response_model=ApplicationRead,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="(Re)run scoring and the confirmation message",
+    description=(
+        "Starts the ProcessApplication workflow, or attaches to a run in progress. Safe to "
+        "repeat: scoring is recomputed, and the confirmation is never sent twice. Use it "
+        "to recover an application created while the workflow engine was down."
+    ),
+    responses={503: {"description": "The workflow engine is unreachable"}},
+)
+async def process_application(
+    session: SessionDep, processor: ApplicationProcessorDep, application_id: uuid.UUID
+) -> ApplicationRead:
+    application = await application_service.get_application(session, application_id)
+    await processor.start(application.id)
+    return ApplicationRead.model_validate(application)
+
+
+@router.get(
+    "/{application_id}/notifications",
+    response_model=list[NotificationRead],
+    summary="Messages sent about an application",
+)
+async def list_notifications(
+    session: SessionDep, application_id: uuid.UUID
+) -> list[NotificationRead]:
+    await application_service.get_application(session, application_id)
+    notifications = await notification_service.list_for_application(session, application_id)
+    return [NotificationRead.model_validate(n) for n in notifications]
 
 
 @router.delete(

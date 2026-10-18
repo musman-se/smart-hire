@@ -16,6 +16,7 @@ from app.applications.models import Application, ApplicationStageChange
 from app.candidates.models import Candidate
 from app.core.models import Base
 from app.jobs.models import Job
+from app.notifications.models import Notification
 from app.publishing.models import JobKeyword, JobSection, job_extracted_skills
 from app.skills.models import Skill, candidate_skills, job_skills
 
@@ -27,6 +28,7 @@ __all__ = [
     "Job",
     "JobKeyword",
     "JobSection",
+    "Notification",
     "Skill",
     "candidate_skills",
     "job_extracted_skills",

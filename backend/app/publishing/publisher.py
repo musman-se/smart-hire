@@ -18,8 +18,7 @@ from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from temporalio.service import RPCError, RPCStatusCode
 
 from app.core.config import settings
-from app.core.temporal import get_temporal_client
-from app.publishing.errors import WorkflowUnavailableError
+from app.core.temporal import WorkflowUnavailableError, get_temporal_client
 from app.publishing.workflow import PublishJobInput, PublishJobWorkflow
 
 logger = logging.getLogger(__name__)
