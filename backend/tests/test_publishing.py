@@ -169,8 +169,8 @@ async def test_job_being_processed_cannot_be_edited_or_applied_to(
 
     # Leave the job in PROCESSING: a publisher that accepts the start and does nothing,
     # as if the worker had not picked the task up yet.
-    async def accept_only(job_id: uuid.UUID, *, restart: bool = False) -> None:
-        publisher.starts.append((job_id, restart))
+    async def accept_only(job_id: uuid.UUID) -> None:
+        publisher.starts.append(job_id)
 
     publisher.start = accept_only  # type: ignore[method-assign]
     await client.post(f"/jobs/{job['id']}/publish")
@@ -183,22 +183,23 @@ async def test_job_being_processed_cannot_be_edited_or_applied_to(
     assert application.json()["error"]["code"] == "job_not_open"
 
 
-async def test_publishing_a_processing_job_starts_again_rather_than_twice(
+async def test_publishing_a_processing_job_starts_a_fresh_run(
     client: AsyncClient, publisher: InlineJobPublisher
 ) -> None:
-    """A second Publish on a job still processing re-issues the start, which Temporal
-    attaches to the run in flight (USE_EXISTING) — or restarts if it was lost."""
+    """A second Publish on a job still processing starts again. Temporal replaces the
+    run in flight (TERMINATE_EXISTING), so there is one run per job, and a job whose run
+    was lost to an outage is healed by publishing it again."""
     job = await make_job(client, publish=False)
 
-    async def accept_only(job_id: uuid.UUID, *, restart: bool = False) -> None:
-        publisher.starts.append((job_id, restart))
+    async def accept_only(job_id: uuid.UUID) -> None:
+        publisher.starts.append(job_id)
 
     publisher.start = accept_only  # type: ignore[method-assign]
     first = await client.post(f"/jobs/{job['id']}/publish")
     second = await client.post(f"/jobs/{job['id']}/publish")
 
     assert first.status_code == second.status_code == 202
-    assert [restart for _, restart in publisher.starts] == [False, False]
+    assert publisher.starts == [uuid.UUID(job["id"])] * 2
 
 
 async def test_editing_a_published_job_refreshes_its_content(
@@ -212,7 +213,7 @@ async def test_editing_a_published_job_refreshes_its_content(
 
     assert response.status_code == 200
     assert response.json()["status"] == "published"  # stayed live throughout
-    assert publisher.starts[-1][1] is True  # restart=True: the newest edit wins
+    assert len(publisher.starts) == 2  # the publish, then the refresh after the edit
     content = (await client.get(f"/jobs/{job['id']}/content")).json()
     assert "rust" in [s["name"] for s in content["extracted_skills"]]
 
@@ -235,8 +236,8 @@ async def test_closing_mid_publish_is_not_undone_by_the_workflow(
     stays closed."""
     job = await make_job(client, publish=False)
 
-    async def accept_only(job_id: uuid.UUID, *, restart: bool = False) -> None:
-        publisher.starts.append((job_id, restart))
+    async def accept_only(job_id: uuid.UUID) -> None:
+        publisher.starts.append(job_id)
 
     publisher.start = accept_only  # type: ignore[method-assign]
     await client.post(f"/jobs/{job['id']}/publish")
