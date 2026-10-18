@@ -123,6 +123,26 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # Runs workflow and activity code. The API only asks Temporal to *start* a workflow;
+  # this process polls Temporal's task queue and does the work. Several can run side
+  # by side (`docker compose up --scale worker=3`) and Temporal spreads tasks across
+  # them. Code is bind-mounted like the API's, but a worker does not hot-reload:
+  # `docker compose restart worker` after editing workflow or activity code.
+  worker:
+    <<: *backend
+    container_name: smarthire-worker
+    restart: unless-stopped
+    command: python -m app.worker
+    volumes:
+      - ./backend/app:/code/app
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_healthy
+
   # Static build served by nginx, which also proxies /api to the api service. Same origin
   # for app and API, so the project needs no CORS configuration anywhere.
   web:
