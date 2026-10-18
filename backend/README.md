@@ -15,7 +15,7 @@ brief names: duplicate applications, eligibility checks, and application limits.
 | Database | PostgreSQL 17 | Constraints, arrays, native enums |
 | ORM | SQLAlchemy 2.0 async + asyncpg | Async all the way down, no blocking driver |
 | Migrations | Alembic | Reviewable, reversible schema history |
-| Config | pydantic-settings | Same validation as the API schemas |
+| Config | pydantic-settings | Every setting from an environment variable, validated at startup |
 | Tests | pytest + httpx | In-process ASGI transport, real Postgres |
 | Local infra | Docker Compose | One command to a working stack |
 
@@ -24,17 +24,32 @@ brief names: duplicate applications, eligibility checks, and application limits.
 ### With Docker — everything, one command
 
 ```bash
-cp .env.example .env
+cp .env.example .env          # at the repository root
 docker compose up --build
+docker compose run --rm seed  # optional: demo data
 ```
 
 - API: http://localhost:8000
 - Interactive docs: http://localhost:8000/docs
 - Postgres: `localhost:5432`
 
-Compose starts three services: `db`, then a one-shot `migrate` that runs
-`alembic upgrade head`, and only then `api`. The API therefore never starts against an
-out-of-date schema.
+Compose starts `db`, then a one-shot `migrate` that runs `alembic upgrade head`, and
+only then `api`. The API therefore never starts against an out-of-date schema.
+
+### Configuration
+
+Every setting is an environment variable, read and validated by
+[app/core/config.py](app/core/config.py). The root [.env.example](../.env.example) lists
+all of them with their defaults. The backend reads the root `.env` and then
+`backend/.env` (personal overrides); real environment variables win over both.
+
+| Group | Variables |
+|---|---|
+| Database | `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` — or one `DATABASE_URL` |
+| Pool | `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT_SECONDS`, `DB_POOL_RECYCLE_SECONDS`, `DB_ECHO` |
+| App | `APP_NAME`, `ENVIRONMENT`, `LOG_LEVEL` |
+| Rules | `MAX_APPLICATIONS_PER_CANDIDATE`, `DEFAULT_PAGE_SIZE`, `MAX_PAGE_SIZE` |
+| Tests | `TEST_DATABASE_NAME` |
 
 ### Without Docker — API local, Postgres in a container
 
@@ -86,6 +101,14 @@ All paths, with the interactive version at `/docs`.
 | GET | `/applications/{application_id}` | Fetch one |
 | POST | `/applications/{application_id}/stage` | Advance through the pipeline |
 | DELETE | `/applications/{application_id}` | Withdraw |
+
+### Skills
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/skills` | The shared skill vocabulary. Filter: `search` (prefix) |
+
+Skills are created implicitly when a job or candidate first lists one.
 
 ### Health
 
@@ -149,23 +172,26 @@ happened.
 
 ## Layout
 
+Organised by domain, then by layer — see
+[ARCHITECTURE.md §2](../docs/ARCHITECTURE.md#2-packages-and-layers).
+
 ```
 app/
-├── main.py            FastAPI app: middleware, handlers, router mounting
-├── api/
-│   ├── deps.py        Shared dependencies (pagination)
-│   └── routers/       HTTP layer — parse, delegate, shape
-├── schemas/           Pydantic: shapes crossing the API boundary
-├── models/            SQLAlchemy: shapes stored in tables
-├── services/          Business rules; no HTTP knowledge
-└── core/              config, db, errors, logging, enums
-migrations/            Alembic revisions
+├── main.py            FastAPI app: middleware, handlers, router table
+├── models.py          Model registry, read by Alembic
+├── health.py          Liveness and readiness
+├── core/              config, db, base models, errors, schemas, pagination, logging
+├── jobs/              models · schemas · service · router · errors · enums
+├── candidates/        models · schemas · service · router · errors
+├── applications/      models · schemas · service · router · errors · enums
+└── skills/            models · schemas · service · router
+migrations/            Alembic revisions — see docs/MIGRATIONS.md
 tests/
 ```
 
-`schemas/` and `models/` stay separate. Services take a session and raise
-`DomainError` subclasses, so they are callable from a Celery worker or Temporal activity
-in later modules without dragging FastAPI along.
+Each domain's `schemas.py` and `models.py` stay separate. Services take a session and
+raise their domain's `DomainError` subclasses, so they are callable from a Temporal
+activity or a worker without dragging FastAPI along.
 
 ## Tests
 
@@ -174,8 +200,9 @@ docker compose up -d db     # the suite needs a real Postgres
 pytest
 ```
 
-35 tests. They run against a `smarthire_test` database, created on demand and dropped at
-the end. Deliberately not SQLite: the unique constraint, array containment and native
+50 tests. They run against a `smarthire_test` database, created on demand and dropped at
+the end; `test_migrations.py` replays the whole migration history against its own
+scratch database. Deliberately not SQLite: the unique constraint, array containment and native
 enums either behave differently there or do not exist, and a suite that passes on a
 database you do not deploy proves very little.
 
@@ -183,12 +210,15 @@ database you do not deploy proves very little.
 ruff check .                # lint
 alembic upgrade head        # apply migrations
 alembic downgrade -1        # roll one back
+alembic check               # fail if models and migrations disagree
 ```
 
 ## Documentation
 
 - [Product Requirements Document](../docs/PRD.md)
 - [Architecture and design decisions](../docs/ARCHITECTURE.md)
+- [Database design — normalisation, indexes, concurrency](../docs/DATABASE.md)
+- [How migrations work](../docs/MIGRATIONS.md)
 
 ## Module roadmap
 
