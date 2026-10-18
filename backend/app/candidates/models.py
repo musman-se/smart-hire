@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Integer, String
+from sqlalchemy import CheckConstraint, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.models import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -45,6 +45,20 @@ class Candidate(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __table_args__ = (
         CheckConstraint("years_experience >= 0", name="years_experience_non_negative"),
+        # The API lowercases emails before they reach the database, which is what makes
+        # the unique constraint case-insensitive in practice. This makes the database
+        # enforce it too: "Ayesha@x.com" cannot be written by any client, so it can never
+        # sit beside "ayesha@x.com" as a second account.
+        CheckConstraint("email = lower(email)", name="email_lowercase"),
+        # Default listing order, newest first.
+        Index("ix_candidates_created_at", "created_at"),
+        # Name search is ILIKE '%term%' — see ix_jobs_title_trgm.
+        Index(
+            "ix_candidates_full_name_trgm",
+            "full_name",
+            postgresql_using="gin",
+            postgresql_ops={"full_name": "gin_trgm_ops"},
+        ),
     )
 
     @property

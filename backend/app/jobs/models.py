@@ -68,9 +68,23 @@ class Job(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             "max_applications IS NULL OR max_applications > 0",
             name="max_applications_positive",
         ),
-        # Recruiters browse by status constantly; this is the hottest filter in the API.
-        Index("ix_jobs_status", "status"),
-        Index("ix_jobs_title", "title"),
+        # The hottest query in the API — candidates browsing open jobs — is
+        #   WHERE status = 'published' ORDER BY created_at DESC LIMIT 20.
+        # A composite index answers the filter *and* the sort: Postgres walks the
+        # 'published' slice backwards and stops after 20 entries. An index on status
+        # alone still had to sort every published job to find the newest 20.
+        Index("ix_jobs_status_created_at", "status", "created_at"),
+        # The same listing with no status filter.
+        Index("ix_jobs_created_at", "created_at"),
+        # Title search is ILIKE '%term%'. A B-tree can only match a known prefix, so the
+        # leading % made the old B-tree on title useless for it. A trigram GIN index
+        # matches any substring of three characters or more.
+        Index(
+            "ix_jobs_title_trgm",
+            "title",
+            postgresql_using="gin",
+            postgresql_ops={"title": "gin_trgm_ops"},
+        ),
     )
 
     @property

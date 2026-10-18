@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, MetaData, func
+from sqlalchemy import DDL, DateTime, MetaData, event, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -25,6 +25,14 @@ class Base(DeclarativeBase):
     """All models inherit from this. Alembic reads Base.metadata to diff the schema."""
 
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
+
+
+# pg_trgm provides the trigram operator classes behind the title and name search indexes.
+# Migrations create it explicitly; this listener covers metadata.create_all(), which the
+# test suite uses, so the models stay self-sufficient.
+event.listen(
+    Base.metadata, "before_create", DDL("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+)
 
 
 class UUIDPrimaryKeyMixin:
