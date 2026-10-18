@@ -83,10 +83,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+/**
+ * A fresh Idempotency-Key. Create one per *intended action* and resend the same one if
+ * that action is retried; the backend then replays its first answer instead of acting
+ * twice. See backend/app/core/idempotency.py.
+ */
+export function newIdempotencyKey(): string {
+  return crypto.randomUUID();
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
+  post: <T>(path: string, body?: unknown, options?: { idempotencyKey?: string }) =>
+    request<T>(path, {
+      method: "POST",
+      body: body ? JSON.stringify(body) : undefined,
+      headers: options?.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {},
+    }),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
