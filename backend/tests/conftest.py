@@ -25,7 +25,7 @@ from app.core.db import get_session
 from app.main import app
 from app.models import Base
 
-TEST_DB_NAME = "smarthire_test"
+TEST_DB_NAME = settings.test_database_name
 
 
 def _swap_database(url: str, name: str) -> str:

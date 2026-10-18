@@ -1,7 +1,7 @@
 """Database engine and session wiring.
 
-Phase 0 only uses this to prove the API can reach Postgres. Phase 2 builds the real
-models and migrations on top of it — the engine and session factory do not change.
+Every engine setting comes from app.core.config, so pool size or SQL echo can be tuned
+per environment without a code change.
 """
 
 from collections.abc import AsyncGenerator
@@ -16,7 +16,11 @@ from app.core.config import settings
 # would defeat pooling entirely.
 engine = create_async_engine(
     settings.database_url,
-    echo=False,
+    echo=settings.db_echo,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    pool_timeout=settings.db_pool_timeout_seconds,
+    pool_recycle=settings.db_pool_recycle_seconds,
     pool_pre_ping=True,  # check a pooled connection is alive before handing it out
 )
 

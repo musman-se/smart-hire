@@ -3,20 +3,29 @@
 Deliberately goes through the HTTP API rather than inserting rows: the seed data is then
 guaranteed to satisfy every rule the API enforces, and running it doubles as a smoke test.
 
-    python scripts/seed.py                       # against http://localhost:8000
+    docker compose run --rm seed                 # inside Compose, against http://api:8000
+    python scripts/seed.py                       # from your machine, http://localhost:8000
     python scripts/seed.py http://localhost:3000/api
+
+The target is, in order: the first argument, then SMARTHIRE_API_URL, then
+http://localhost:8000. Compose sets SMARTHIRE_API_URL for the seed service.
 
 Safe to re-run — anything that already exists is reported and skipped.
 """
 
 from __future__ import annotations
 
+import json
+import os
 import sys
 import urllib.error
 import urllib.request
-import json
 
-BASE = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "http://localhost:8000"
+BASE = (
+    sys.argv[1]
+    if len(sys.argv) > 1
+    else os.environ.get("SMARTHIRE_API_URL", "http://localhost:8000")
+).rstrip("/")
 
 JOBS = [
     {
@@ -129,9 +138,17 @@ def main() -> None:
         print("API is not healthy — aborting.")
         raise SystemExit(1)
 
+    # Jobs, unlike candidate emails, have no natural unique key, so re-running would
+    # duplicate them. Skip any title that already exists.
+    _, existing = call("GET", "/jobs?limit=100")
+    existing_titles = {job["title"] for job in existing.get("items", [])}
+
     jobs: list[dict] = []
     for spec in JOBS:
         publish = spec.pop("publish", False)
+        if spec["title"] in existing_titles:
+            print(f"  job  {spec['title']:<28} skipped (already exists)")
+            continue
         status, job = call("POST", "/jobs", spec)
         if status != 201:
             print(f"  job  {spec['title']:<28} skipped ({code_of(job)})")
