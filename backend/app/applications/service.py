@@ -4,11 +4,14 @@
     2. Job-specific eligibility checks
     3. Application limits
 
-Rule 1 is the interesting one. It is enforced by a unique constraint in the database,
-not by a Python check, because a Python check cannot be correct under concurrency: two
-simultaneous requests can both SELECT "no existing application", both see nothing, and
-both INSERT. The pre-check below exists only to produce a friendly error on the common
-path — the constraint is what makes the rule true.
+Each rule is made to hold under concurrency, which is where the naive versions break:
+
+- Rule 1 is enforced by a unique constraint, not by a Python check. Two simultaneous
+  requests can both SELECT "no existing application", both see nothing, and both
+  INSERT. The pre-check below only produces a friendly error on the common path.
+- Rule 3 counts rows and then inserts one — the same check-then-act shape, which a
+  constraint cannot express ("at most N rows" is not a unique key). It is made safe with
+  row locks instead: see apply_to_job.
 """
 
 import logging
@@ -51,8 +54,12 @@ ALLOWED_TRANSITIONS: dict[ApplicationStage, set[ApplicationStage]] = {
 }
 
 
-async def get_application(session: AsyncSession, application_id: uuid.UUID) -> Application:
-    application = await session.get(Application, application_id)
+async def get_application(
+    session: AsyncSession, application_id: uuid.UUID, *, lock: bool = False
+) -> Application:
+    application = await session.get(
+        Application, application_id, with_for_update={"key_share": True} if lock else None
+    )
     if application is None:
         raise ApplicationNotFoundError(application_id)
     return application
@@ -99,11 +106,39 @@ async def _count_active_applications(session: AsyncSession, candidate_id: uuid.U
     )
 
 
+async def _count_job_applications(session: AsyncSession, job_id: uuid.UUID) -> int:
+    """Every application a job has received, whatever its stage — the cap is on intake."""
+    return (
+        await session.scalar(
+            select(func.count()).select_from(Application).where(Application.job_id == job_id)
+        )
+        or 0
+    )
+
+
 async def apply_to_job(
     session: AsyncSession, job_id: uuid.UUID, payload: ApplicationCreate
 ) -> Application:
-    job = await get_job(session, job_id)
-    candidate = await get_candidate(session, payload.candidate_id)
+    # Lock the job row, then the candidate row, until this transaction commits.
+    #
+    # Rule 3 counts applications and then inserts one. Without the locks, five requests
+    # can all count "0 of 1" before any of them commits, and all five get in. With them,
+    # a second application to the same job — or from the same candidate — waits here
+    # until the first commits, and then counts the row the first one inserted.
+    #
+    # The order is fixed — always job, then candidate — because two transactions taking
+    # the same two locks in opposite orders can each hold one and wait forever for the
+    # other: a deadlock. Postgres would detect it and abort one, but only after a delay.
+    #
+    # FOR NO KEY UPDATE rather than FOR UPDATE: it still excludes other appliers, but
+    # does not block inserts elsewhere that merely reference this row through a foreign
+    # key (job_skills, for one).
+    #
+    # The cost is that applications to one job are serialised. Each holds the lock for
+    # a few milliseconds, so a single job can still take hundreds per second; a job
+    # without a cap could skip the job lock entirely if that ever matters.
+    job = await get_job(session, job_id, lock=True)
+    candidate = await get_candidate(session, payload.candidate_id, lock=True)
 
     # A draft job is not visible to candidates; a closed one is no longer accepting.
     if job.status is not JobStatus.PUBLISHED:
@@ -122,14 +157,7 @@ async def apply_to_job(
         )
 
     if job.max_applications is not None:
-        received = (
-            await session.scalar(
-                select(func.count())
-                .select_from(Application)
-                .where(Application.job_id == job.id)
-            )
-            or 0
-        )
+        received = await _count_job_applications(session, job.id)
         if received >= job.max_applications:
             raise JobCapacityReachedError(
                 f"Job {job.id} has reached its cap of {job.max_applications} applications."
@@ -166,7 +194,6 @@ async def apply_to_job(
             "This candidate has already applied to this job."
         ) from exc
 
-    await session.refresh(application)
     logger.info(
         "application_created id=%s job=%s candidate=%s", application.id, job.id, candidate.id
     )
@@ -211,7 +238,10 @@ async def advance_stage(
     screening and interview — and the analytics in later modules would report a
     conversion funnel that never happened.
     """
-    application = await get_application(session, application_id)
+    # Locked so two recruiters moving the same application at once are applied one
+    # after the other. Unlocked, both read "applied", both write, and the second
+    # silently overwrites the first — a lost update.
+    application = await get_application(session, application_id, lock=True)
     current = application.stage
 
     if target == current:
@@ -225,7 +255,6 @@ async def advance_stage(
 
     application.stage = target
     await session.commit()
-    await session.refresh(application)
     logger.info("application_stage_changed id=%s from=%s to=%s", application.id, current, target)
     return application
 

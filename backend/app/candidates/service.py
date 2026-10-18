@@ -13,8 +13,13 @@ from app.skills.models import Skill
 from app.skills.service import resolve_skills
 
 
-async def get_candidate(session: AsyncSession, candidate_id: uuid.UUID) -> Candidate:
-    candidate = await session.get(Candidate, candidate_id)
+async def get_candidate(
+    session: AsyncSession, candidate_id: uuid.UUID, *, lock: bool = False
+) -> Candidate:
+    """Load a candidate, optionally row-locked until the transaction ends (see get_job)."""
+    candidate = await session.get(
+        Candidate, candidate_id, with_for_update={"key_share": True} if lock else None
+    )
     if candidate is None:
         raise CandidateNotFoundError(candidate_id)
     return candidate
@@ -64,7 +69,6 @@ async def create_candidate(session: AsyncSession, payload: CandidateCreate) -> C
             f"A candidate with email {payload.email} already exists."
         ) from exc
 
-    await session.refresh(candidate)
     return candidate
 
 
@@ -80,7 +84,6 @@ async def update_candidate(
         setattr(candidate, field, value)
 
     await session.commit()
-    await session.refresh(candidate)
     return candidate
 
 

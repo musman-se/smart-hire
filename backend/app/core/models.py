@@ -55,7 +55,15 @@ class TimestampMixin:
 
     server_default and onupdate mean the values are correct even for a write that did not
     come through this codebase — a migration, or a psql session.
+
+    eager_defaults makes the ORM fetch those database-generated values in the same
+    statement that writes the row — INSERT ... RETURNING created_at, updated_at — instead
+    of marking them expired. Without it, every write needed a second round trip
+    (session.refresh) before the response could be built; under async SQLAlchemy,
+    touching an expired attribute outside an await raises rather than querying.
     """
+
+    __mapper_args__ = {"eager_defaults": True}
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

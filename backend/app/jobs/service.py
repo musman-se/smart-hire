@@ -19,8 +19,11 @@ from app.skills.models import Skill
 from app.skills.service import resolve_skills
 
 
-async def get_job(session: AsyncSession, job_id: uuid.UUID) -> Job:
-    job = await session.get(Job, job_id)
+async def get_job(session: AsyncSession, job_id: uuid.UUID, *, lock: bool = False) -> Job:
+    """Load a job. lock=True takes a row lock (SELECT ... FOR NO KEY UPDATE) held until
+    the transaction ends — for callers that read the job, decide, then write based on
+    what they read. See applications.service.apply_to_job."""
+    job = await session.get(Job, job_id, with_for_update={"key_share": True} if lock else None)
     if job is None:
         raise JobNotFoundError(job_id)
     return job
@@ -62,7 +65,6 @@ async def create_job(session: AsyncSession, payload: JobCreate) -> Job:
     job.skill_set = await resolve_skills(session, payload.required_skills)
     session.add(job)
     await session.commit()
-    await session.refresh(job)
     return job
 
 
@@ -81,7 +83,6 @@ async def update_job(session: AsyncSession, job_id: uuid.UUID, payload: JobUpdat
         setattr(job, field, value)
 
     await session.commit()
-    await session.refresh(job)
     return job
 
 
@@ -102,7 +103,6 @@ async def publish_job(session: AsyncSession, job_id: uuid.UUID) -> Job:
     job.status = JobStatus.PUBLISHED
     job.published_at = datetime.now(UTC)
     await session.commit()
-    await session.refresh(job)
     return job
 
 
@@ -110,7 +110,6 @@ async def close_job(session: AsyncSession, job_id: uuid.UUID) -> Job:
     job = await get_job(session, job_id)
     job.status = JobStatus.CLOSED
     await session.commit()
-    await session.refresh(job)
     return job
 
 
@@ -121,7 +120,6 @@ async def reopen_job(session: AsyncSession, job_id: uuid.UUID) -> Job:
     job.status = JobStatus.DRAFT
     job.published_at = None
     await session.commit()
-    await session.refresh(job)
     return job
 
 
