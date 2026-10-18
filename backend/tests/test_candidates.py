@@ -79,3 +79,17 @@ async def test_deleting_a_candidate_removes_them(client: AsyncClient) -> None:
 
     assert deleted.status_code == 204
     assert fetched.status_code == 404
+
+
+async def test_patch_null_is_refused_for_required_fields_but_allowed_for_optional_ones(
+    client: AsyncClient,
+) -> None:
+    candidate = await make_candidate(client, headline="Backend engineer")
+
+    required = await client.patch(f"/candidates/{candidate['id']}", json={"full_name": None})
+    optional = await client.patch(f"/candidates/{candidate['id']}", json={"headline": None})
+
+    assert required.status_code == 422
+    assert "full_name cannot be null" in required.json()["error"]["message"]
+    assert optional.status_code == 200
+    assert optional.json()["headline"] is None

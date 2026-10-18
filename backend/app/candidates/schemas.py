@@ -5,7 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-from app.core.schemas import ReadModel
+from app.core.schemas import PatchModel, ReadModel
 from app.skills.schemas import normalise_skill_names
 
 
@@ -35,7 +35,9 @@ class CandidateCreate(CandidateBase):
     pass
 
 
-class CandidateUpdate(BaseModel):
+class CandidateUpdate(PatchModel):
+    not_nullable = frozenset({"full_name", "years_experience", "skills"})
+
     full_name: str | None = Field(default=None, min_length=2, max_length=160)
     phone: str | None = Field(default=None, max_length=32)
     headline: str | None = Field(default=None, max_length=200)

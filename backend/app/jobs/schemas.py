@@ -10,7 +10,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.core.schemas import ReadModel
+from app.core.schemas import PatchModel, ReadModel
 from app.jobs.enums import EmploymentType, JobStatus
 from app.skills.schemas import normalise_skill_names
 
@@ -36,12 +36,17 @@ class JobCreate(JobBase):
     client post status="published" would skip the publishing transition entirely."""
 
 
-class JobUpdate(BaseModel):
+class JobUpdate(PatchModel):
     """Every field optional: this backs PATCH, where omitted means "leave unchanged".
 
     `model_dump(exclude_unset=True)` in the service distinguishes "not sent" from
     "explicitly set to null" — a distinction a plain default of None would destroy.
+    Null is accepted only where the column allows it; see PatchModel.
     """
+
+    not_nullable = frozenset(
+        {"title", "description", "employment_type", "required_skills", "min_experience_years"}
+    )
 
     title: str | None = Field(default=None, min_length=3, max_length=200)
     description: str | None = Field(default=None, min_length=10)

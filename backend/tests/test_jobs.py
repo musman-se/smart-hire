@@ -129,3 +129,14 @@ async def test_limit_above_the_ceiling_is_rejected(client: AsyncClient) -> None:
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
+
+
+async def test_patch_rejects_null_for_a_required_field(client: AsyncClient) -> None:
+    """Omitting a field leaves it alone; sending null for a NOT NULL column is an error
+    the API must catch — not one the database reports as a 500."""
+    job = await make_job(client, publish=False)
+
+    response = await client.patch(f"/jobs/{job['id']}", json={"title": None})
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
