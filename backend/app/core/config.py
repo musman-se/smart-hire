@@ -92,6 +92,13 @@ class Settings(BaseSettings):
     # Zero outside a demo.
     publishing_fault_rate: float = Field(default=0.0, ge=0.0, le=1.0)
 
+    # --- Worker -------------------------------------------------------------------
+    # On SIGTERM the worker stops polling and gives activities already running this long
+    # to finish; whatever is still running after that is cancelled, and Temporal retries
+    # it. Keep it below the container's stop_grace_period, or Docker kills the process
+    # first.
+    worker_shutdown_grace_seconds: float = Field(default=20.0, ge=0)
+
     # --- Application processing workflow ---------------------------------------------
     # Attempts per activity (scoring, the confirmation message) before giving up.
     application_processing_max_attempts: int = Field(default=5, ge=1, le=20)

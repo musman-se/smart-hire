@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import logging
 import signal
+from datetime import timedelta
 
 from temporalio.client import Client
 from temporalio.worker import Worker
@@ -45,6 +46,10 @@ def build_worker(client: Client, task_queue: str, session_factory=SessionLocal) 
         task_queue=task_queue,
         workflows=[PublishJobWorkflow, ProcessApplicationWorkflow],
         activities=publishing.all() + applications.all(),
+        # The SDK's default is zero: on shutdown, running activities are cancelled at
+        # once. A grace period lets a half-done store_job_content commit instead of
+        # being cancelled and waiting out its start-to-close timeout before a retry.
+        graceful_shutdown_timeout=timedelta(seconds=settings.worker_shutdown_grace_seconds),
     )
 
 
@@ -68,8 +73,10 @@ async def main() -> None:
     client = await connect()
     worker = build_worker(client, settings.temporal_task_queue)
 
-    # docker stop sends SIGTERM. Stop polling, let in-flight tasks finish, then exit,
-    # rather than dying mid-activity — that would still be safe, only slower to recover.
+    # docker stop sends SIGTERM. Leaving `async with worker` stops polling for new tasks
+    # and gives running activities WORKER_SHUTDOWN_GRACE_SECONDS to finish; anything
+    # still running then is cancelled and retried by Temporal. Dying mid-activity would
+    # also be safe — activities are idempotent — only slower to recover.
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

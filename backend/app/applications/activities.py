@@ -121,8 +121,11 @@ class ApplicationActivities:
         if inserted is None:
             logger.info("notification_skipped kind=application_received app=%s", application_id)
             return False
-        # The simulated delivery. A real provider would be called here, passing the
-        # dedupe key as its idempotency key.
+        # The simulated delivery. With a real provider the order matters: the row is
+        # committed above, so a crash right here would record a message that never left.
+        # The safe shape is insert as "pending", call the provider with the dedupe key as
+        # *its* idempotency key, then mark "sent" — a retry then re-calls the provider,
+        # which recognises the key and does not send twice.
         logger.info(
             "notification_sent kind=application_received channel=email to=%s app=%s",
             candidate.email,

@@ -142,14 +142,18 @@ services:
 
   # Runs workflow and activity code. The API only asks Temporal to *start* a workflow;
   # this process polls Temporal's task queue and does the work. Several can run side
-  # by side (`docker compose up --scale worker=3`) and Temporal spreads tasks across
-  # them. Code is bind-mounted like the API's, but a worker does not hot-reload:
+  # by side (`docker compose up -d --scale worker=3`) and Temporal spreads tasks across
+  # them — which is why this service, unlike the others, has no fixed container_name:
+  # Docker requires every container's name to be unique.
+  # Code is bind-mounted like the API's, but a worker does not hot-reload:
   # `docker compose restart worker` after editing workflow or activity code.
   worker:
     <<: *backend
-    container_name: smarthire-worker
     restart: unless-stopped
     command: python -m app.worker
+    # Longer than WORKER_SHUTDOWN_GRACE_SECONDS (20), so running activities get their
+    # grace period before Docker escalates to SIGKILL.
+    stop_grace_period: 30s
     volumes:
       - ./backend/app:/code/app
     depends_on:

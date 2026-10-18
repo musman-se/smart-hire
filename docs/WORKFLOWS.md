@@ -139,8 +139,8 @@ Every row was tested, most of them against the real stack.
 | What fails | What happens | Where it is proven |
 |---|---|---|
 | An activity, transiently | Retried with backoff; the recruiter never sees it | `test_transient_failures_are_retried_until_they_succeed` |
-| An activity, every attempt | Compensation: job → `publish_failed` + reason; run marked Failed | `test_exhausted_retries_mark_the_job_failed`; live with `PUBLISHING_FAULT_RATE=1` |
-| The worker, mid-publish | Job waits in `processing`; a restarted worker resumes and finishes | Live: worker stopped, publish, worker started → published in ~4 s |
+| An activity, every attempt | Compensation: job → `publish_failed` + reason; run marked Failed — after the backoff waits, 1 + 2 + 4 + 8 = 15 s with 5 attempts | `test_exhausted_retries_mark_the_job_failed`; live with `PUBLISHING_FAULT_RATE=1` |
+| The worker, mid-publish | Job waits in `processing`; a restarted worker resumes and finishes | Live: worker stopped, publish, worker started → published within seconds |
 | Temporal, when publishing | Status change reverted; `503 workflow_unavailable`; nothing half-done | `test_engine_outage_changes_nothing` |
 | Temporal, when applying | Application still `201`; unscored; `POST /applications/{id}/process` recovers | `test_an_engine_outage_does_not_fail_the_application` |
 | A job closed mid-publish | Stays closed: the final step only leaves `processing` | `test_closing_mid_publish_is_not_undone_by_the_workflow` |

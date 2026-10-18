@@ -25,7 +25,16 @@ upgrades "refused" to "the original answer"; it is never the only guard. That is
 Redis outage fails *open* — logs a warning and carries on — rather than refusing work.
 
 Only 2xx and 4xx responses are stored. A 4xx is a real answer and a retry would get
-the same one; a 5xx or a crash releases the key, so the client may try again.
+the same one; a 5xx — including a DomainError that carries one, such as
+workflow_unavailable — or a crash releases the key, so the client may try again.
+
+**The remaining gap.** The response is stored *after* the transaction commits. If the
+process dies between the two, the claim stays "in progress" until it expires
+(IDEMPOTENCY_LOCK_SECONDS); a retry before then gets 409 idempotency_in_progress, and a
+retry after it runs the action again. For an application or a candidate the database
+then refuses the duplicate (409). For a job, which has no natural unique key, the retry
+creates a second job. Closing that window means storing the key in Postgres, in the
+same transaction as the row it protects — the upgrade path if it ever matters.
 """
 
 import hashlib
@@ -119,6 +128,11 @@ class IdempotencyStore:
         try:
             result = await operation()
         except DomainError as exc:
+            if exc.status_code >= 500:
+                # A dependency was down — not an answer about this request. Replaying it
+                # for a day would turn a blip into an outage for this client.
+                await self._release(redis_key)
+                raise
             # A business refusal is a real answer: store it, so a retry hears it again.
             envelope = {
                 "error": {"code": exc.code, "message": exc.message, "request_id": get_request_id()}
