@@ -1,7 +1,13 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { NEXT_STAGES, type Application, type Candidate } from "../api/types";
+import {
+  NEXT_STAGES,
+  TERMINAL_STAGES,
+  type Application,
+  type Candidate,
+  type Job,
+} from "../api/types";
 import {
   Empty,
   ErrorNotice,
@@ -9,16 +15,25 @@ import {
   StatusPill,
   Tags,
   formatDate,
+  formatDateTime,
 } from "../components/ui";
 import {
   useAdvanceStage,
+  useApplicationHistory,
+  useApplicationNotifications,
   useApplyToJob,
   useCandidates,
   useJob,
   useJobApplications,
+  useJobContent,
+  useJobPublication,
   useJobTransition,
+  useProcessApplication,
   useWithdrawApplication,
 } from "../hooks/queries";
+import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
+
+const TEMPORAL_UI_URL = import.meta.env.VITE_TEMPORAL_UI_URL ?? "http://localhost:8233";
 
 /**
  * The panel that demonstrates the backend's rules.
@@ -30,6 +45,8 @@ import {
 function ApplyPanel({ jobId, jobSkills }: { jobId: string; jobSkills: string[] }) {
   const [candidateId, setCandidateId] = useState("");
   const [coverLetter, setCoverLetter] = useState("");
+  // Same input, same key: pressing Submit again after a timeout cannot apply twice.
+  const idempotencyKey = useIdempotencyKey({ jobId, candidateId, coverLetter });
 
   // A long candidate list would need a search-as-you-type picker; at this scale a
   // single page of 100 is honest and simple.
@@ -43,7 +60,10 @@ function ApplyPanel({ jobId, jobSkills }: { jobId: string; jobSkills: string[] }
     if (!candidateId) return;
 
     apply.mutate(
-      { candidate_id: candidateId, cover_letter: coverLetter || null },
+      {
+        payload: { candidate_id: candidateId, cover_letter: coverLetter || null },
+        idempotencyKey,
+      },
       {
         onSuccess: () => {
           setCandidateId("");
@@ -101,7 +121,8 @@ function ApplyPanel({ jobId, jobSkills }: { jobId: string; jobSkills: string[] }
       {apply.isSuccess && (
         <div className="notice notice-success">
           <strong>Application submitted</strong>
-          It starts in the <code>applied</code> stage.
+          It starts in the <code>applied</code> stage. Its match score and the candidate's
+          confirmation follow in a moment, from the ProcessApplication workflow.
         </div>
       )}
     </div>
@@ -135,10 +156,85 @@ function EligibilityHint({ candidate, jobSkills }: { candidate: Candidate; jobSk
   );
 }
 
+function MatchScore({ application }: { application: Application }) {
+  const process = useProcessApplication();
+
+  if (application.match_score !== null && application.match_score !== undefined) {
+    const tone =
+      application.match_score >= 75 ? "high" : application.match_score >= 50 ? "mid" : "low";
+    return <span className={`score score-${tone}`}>{application.match_score.toFixed(1)}</span>;
+  }
+  if (TERMINAL_STAGES.has(application.stage)) return <span className="muted">—</span>;
+
+  // Unscored and active: either the workflow is about to finish, or it never started
+  // (the engine was down). The button is the recovery path either way, and safe to
+  // press twice — scoring is recomputed and the confirmation never sent twice.
+  return (
+    <button
+      type="button"
+      className="small ghost"
+      title="Run scoring and the confirmation message (POST /applications/{id}/process)"
+      disabled={process.isPending}
+      onClick={() => process.mutate(application.id)}
+    >
+      {process.isPending ? "…" : "score"}
+    </button>
+  );
+}
+
+/** The application's history and the messages sent about it, loaded on demand. */
+function ApplicationTimeline({ applicationId }: { applicationId: string }) {
+  const { data: history } = useApplicationHistory(applicationId, true);
+  const { data: notifications } = useApplicationNotifications(applicationId, true);
+
+  return (
+    <div className="timeline-grid">
+      <div>
+        <h3 className="mini-head">Stage history</h3>
+        <ol className="timeline">
+          {history?.map((change, index) => (
+            <li key={index}>
+              <span className="timeline-when">{formatDateTime(change.changed_at)}</span>
+              <span>
+                {change.from_stage ? <StagePill stage={change.from_stage} /> : <em>new</em>}
+                {" → "}
+                <StagePill stage={change.to_stage} />
+              </span>
+              {change.note && <span className="timeline-note">{change.note}</span>}
+            </li>
+          ))}
+        </ol>
+      </div>
+      <div>
+        <h3 className="mini-head">Messages sent</h3>
+        {notifications && notifications.length > 0 ? (
+          <ul className="timeline">
+            {notifications.map((n, index) => (
+              <li key={index}>
+                <span className="timeline-when">{formatDateTime(n.sent_at)}</span>
+                <span>
+                  <span className="tag">{n.channel}</span> {n.subject}
+                </span>
+                <span className="timeline-note">to {n.recipient}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="muted">None yet.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ApplicationRow({ application }: { application: Application }) {
   const advance = useAdvanceStage();
   const withdraw = useWithdrawApplication();
-  const nextStages = NEXT_STAGES[application.stage];
+  const [expanded, setExpanded] = useState(false);
+  // Withdrawal is the candidate's action and has its own button; the stage buttons are
+  // the recruiter's.
+  const nextStages = NEXT_STAGES[application.stage].filter((stage) => stage !== "withdrawn");
+  const terminal = TERMINAL_STAGES.has(application.stage);
 
   return (
     <>
@@ -152,7 +248,9 @@ function ApplicationRow({ application }: { application: Application }) {
           <StagePill stage={application.stage} />
         </td>
         <td className="muted">{formatDate(application.created_at)}</td>
-        <td className="muted">{application.match_score ?? "—"}</td>
+        <td>
+          <MatchScore application={application} />
+        </td>
         <td className="actions">
           <div className="button-row" style={{ justifyContent: "flex-end" }}>
             {/* Only legal transitions are offered — the stage machine mirrored from the
@@ -168,17 +266,34 @@ function ApplicationRow({ application }: { application: Application }) {
                 {stage}
               </button>
             ))}
-            {nextStages.length === 0 && <span className="muted">final</span>}
+            {terminal && <span className="muted">final</span>}
+            {!terminal && (
+              <button
+                type="button"
+                className="small ghost"
+                onClick={() => withdraw.mutate(application.id)}
+              >
+                Withdraw
+              </button>
+            )}
             <button
               type="button"
               className="small ghost"
-              onClick={() => withdraw.mutate(application.id)}
+              aria-expanded={expanded}
+              onClick={() => setExpanded((value) => !value)}
             >
-              Withdraw
+              {expanded ? "Hide" : "History"}
             </button>
           </div>
         </td>
       </tr>
+      {expanded && (
+        <tr className="row-detail">
+          <td colSpan={5}>
+            <ApplicationTimeline applicationId={application.id} />
+          </td>
+        </tr>
+      )}
       {(advance.error || withdraw.error) && (
         <tr>
           <td colSpan={5}>
@@ -187,6 +302,142 @@ function ApplicationRow({ application }: { application: Application }) {
         </tr>
       )}
     </>
+  );
+}
+
+const PUBLISH_STEPS = [
+  { step: "analysing", label: "Extract skills & break down the description" },
+  { step: "storing", label: "Store structured content" },
+  { step: "marking_ready", label: "Mark the job ready" },
+] as const;
+
+/**
+ * Where publishing is. The job's own status says what candidates see; the workflow's
+ * status says what Temporal is doing — side by side, because they can differ (a job can
+ * be closed while its workflow is still finishing).
+ */
+function PublishingPanel({ job }: { job: Job }) {
+  const processing = job.status === "processing";
+  const { data: publication } = useJobPublication(job.id, processing);
+  const run = publication?.workflow;
+  const currentIndex = PUBLISH_STEPS.findIndex((s) => s.step === run?.current_step);
+
+  if (!run && !processing && job.status !== "publish_failed") return null;
+
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <h2>Publishing</h2>
+        <span className="spacer" />
+        {run && <span className={`pill pill-wf-${run.status}`}>workflow {run.status}</span>}
+      </div>
+
+      {processing && (
+        <ol className="steps">
+          {PUBLISH_STEPS.map((s, index) => (
+            <li
+              key={s.step}
+              className={
+                index < currentIndex ? "done" : index === currentIndex ? "current" : undefined
+              }
+            >
+              {s.label}
+            </li>
+          ))}
+        </ol>
+      )}
+
+      {job.status === "publish_failed" && (
+        <div className="notice notice-error">
+          <strong>Publishing failed — the job is not live</strong>
+          {job.publish_error ?? "No reason was recorded."} Fix the job if needed, then publish
+          again.
+        </div>
+      )}
+
+      <dl className="detail-list">
+        {run && (
+          <>
+            <dt>Workflow</dt>
+            <dd>
+              <a
+                href={`${TEMPORAL_UI_URL}/namespaces/default/workflows/${encodeURIComponent(run.workflow_id)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="mono"
+              >
+                {run.workflow_id}
+              </a>
+            </dd>
+          </>
+        )}
+        <dt>Analysed</dt>
+        <dd>{formatDateTime(job.content_processed_at)}</dd>
+      </dl>
+    </div>
+  );
+}
+
+/** What the publishing workflow extracted from the description. */
+function ContentPanel({ job }: { job: Job }) {
+  const { data: content } = useJobContent(job.id, job.content_processed_at);
+  if (!content) return null;
+
+  const sections = [
+    ["Summary", content.sections.summary],
+    ["Responsibilities", content.sections.responsibilities],
+    ["Requirements", content.sections.requirements],
+    ["Benefits", content.sections.benefits],
+  ] as const;
+
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <h2>Structured content</h2>
+        <span className="spacer" />
+        <span className="muted">extracted by the publishing workflow</span>
+      </div>
+
+      {sections.map(([title, items]) =>
+        items.length === 0 ? null : (
+          <div key={title} className="content-section">
+            <h3 className="mini-head">{title}</h3>
+            <ul>
+              {items.map((item, index) => (
+                <li key={index}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        ),
+      )}
+
+      <h3 className="mini-head">Skills mentioned</h3>
+      <div>
+        {content.extracted_skills.length === 0 ? (
+          <span className="muted">None recognised.</span>
+        ) : (
+          content.extracted_skills.map((s) => (
+            <span key={s.name} className={job.required_skills?.includes(s.name) ? "tag match" : "tag"}>
+              {s.name}
+              {s.mentions > 1 && <sup> ×{s.mentions}</sup>}
+            </span>
+          ))
+        )}
+      </div>
+      <span className="field-hint">Highlighted: also required. The rest feed search and scoring only.</span>
+
+      <h3 className="mini-head" style={{ marginTop: "0.9rem" }}>
+        Keywords
+      </h3>
+      <div className="keywords">
+        {content.keywords.map((k) => (
+          <span key={k.keyword} className="keyword" title={`weight ${k.score}`}>
+            <span className="keyword-bar" style={{ width: `${Math.round(k.score * 100)}%` }} />
+            {k.keyword}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -213,12 +464,22 @@ export function JobDetailPage() {
         </div>
         <span className="spacer" />
         <div className="button-row">
-          {job.status === "draft" && (
-            <button type="button" className="primary" onClick={() => transition.mutate("publish")}>
-              Publish
+          {(job.status === "draft" || job.status === "publish_failed") && (
+            <button
+              type="button"
+              className="primary"
+              disabled={transition.isPending}
+              onClick={() => transition.mutate("publish")}
+            >
+              {job.status === "publish_failed" ? "Retry publishing" : "Publish"}
             </button>
           )}
-          {job.status === "published" && (
+          {job.status === "processing" && (
+            <button type="button" className="primary" disabled>
+              Publishing…
+            </button>
+          )}
+          {job.status !== "closed" && job.status !== "draft" && (
             <button type="button" onClick={() => transition.mutate("close")}>
               Close
             </button>
@@ -252,7 +513,9 @@ export function JobDetailPage() {
                       <th>Candidate</th>
                       <th>Stage</th>
                       <th>Applied</th>
-                      <th>Score</th>
+                      <th title="Match score, 0–100: required skills 60%, experience 25%, other mentioned skills 15%">
+                        Score
+                      </th>
                       <th />
                     </tr>
                   </thead>
@@ -269,39 +532,45 @@ export function JobDetailPage() {
           <ApplyPanel jobId={jobId} jobSkills={job.required_skills ?? []} />
         </div>
 
-        <div className="panel">
-          <div className="panel-head">
-            <h2>Details</h2>
-            <span className="spacer" />
-            <StatusPill status={job.status} />
+        <div>
+          <PublishingPanel job={job} />
+
+          <div className="panel">
+            <div className="panel-head">
+              <h2>Details</h2>
+              <span className="spacer" />
+              <StatusPill status={job.status} />
+            </div>
+
+            <dl className="detail-list">
+              <dt>Employment</dt>
+              <dd>{job.employment_type?.replace("_", " ")}</dd>
+
+              <dt>Min. experience</dt>
+              <dd>{job.min_experience_years} years</dd>
+
+              <dt>Cap</dt>
+              <dd>{job.max_applications ?? "Unlimited"}</dd>
+
+              <dt>Published</dt>
+              <dd>{formatDate(job.published_at)}</dd>
+
+              <dt>Created</dt>
+              <dd>{formatDate(job.created_at)}</dd>
+
+              <dt>Required skills</dt>
+              <dd>
+                <Tags items={job.required_skills ?? []} />
+              </dd>
+            </dl>
+
+            <h3 style={{ margin: "1.2rem 0 0.4rem" }}>Description</h3>
+            <p className="muted" style={{ whiteSpace: "pre-wrap", margin: 0 }}>
+              {job.description}
+            </p>
           </div>
 
-          <dl className="detail-list">
-            <dt>Employment</dt>
-            <dd>{job.employment_type?.replace("_", " ")}</dd>
-
-            <dt>Min. experience</dt>
-            <dd>{job.min_experience_years} years</dd>
-
-            <dt>Cap</dt>
-            <dd>{job.max_applications ?? "Unlimited"}</dd>
-
-            <dt>Published</dt>
-            <dd>{formatDate(job.published_at)}</dd>
-
-            <dt>Created</dt>
-            <dd>{formatDate(job.created_at)}</dd>
-
-            <dt>Skills</dt>
-            <dd>
-              <Tags items={job.required_skills ?? []} />
-            </dd>
-          </dl>
-
-          <h3 style={{ margin: "1.2rem 0 0.4rem" }}>Description</h3>
-          <p className="muted" style={{ whiteSpace: "pre-wrap", margin: 0 }}>
-            {job.description}
-          </p>
+          <ContentPanel job={job} />
         </div>
       </div>
     </>

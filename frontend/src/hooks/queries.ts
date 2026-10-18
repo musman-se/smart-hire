@@ -17,12 +17,13 @@ import {
   type CandidateFilters,
   type JobFilters,
 } from "../api/resources";
-import type {
-  ApplicationCreate,
-  ApplicationStage,
-  CandidateCreate,
-  JobCreate,
-  JobUpdate,
+import {
+  TERMINAL_STAGES,
+  type ApplicationCreate,
+  type ApplicationStage,
+  type CandidateCreate,
+  type JobCreate,
+  type JobUpdate,
 } from "../api/types";
 
 /** Centralised keys so an invalidation cannot miss a cache by mistyping a string. */
@@ -30,6 +31,10 @@ export const keys = {
   jobs: ["jobs"] as const,
   jobList: (filters: JobFilters) => ["jobs", "list", filters] as const,
   job: (id: string) => ["jobs", "detail", id] as const,
+  // Under the "jobs" prefix, so invalidating jobs refreshes these too.
+  publication: (id: string) => ["jobs", "publication", id] as const,
+  content: (id: string, processedAt: string | null | undefined) =>
+    ["jobs", "content", id, processedAt] as const,
 
   candidates: ["candidates"] as const,
   candidateList: (filters: CandidateFilters) => ["candidates", "list", filters] as const,
@@ -39,6 +44,9 @@ export const keys = {
   jobApplications: (jobId: string) => ["applications", "job", jobId] as const,
   candidateApplications: (candidateId: string) =>
     ["applications", "candidate", candidateId] as const,
+  history: (applicationId: string) => ["applications", "history", applicationId] as const,
+  notifications: (applicationId: string) =>
+    ["applications", "notifications", applicationId] as const,
 
   readiness: ["health", "ready"] as const,
 };
@@ -55,14 +63,39 @@ export function useJobs(filters: JobFilters) {
   });
 }
 
+/** Publishing is asynchronous, so while a job is `processing` it is re-fetched every
+ * second until the workflow moves it on. */
 export function useJob(id: string) {
-  return useQuery({ queryKey: keys.job(id), queryFn: () => jobsApi.get(id) });
+  return useQuery({
+    queryKey: keys.job(id),
+    queryFn: () => jobsApi.get(id),
+    refetchInterval: (query) => (query.state.data?.status === "processing" ? 1000 : false),
+  });
+}
+
+/** The workflow's own view: live step while running, final status after. */
+export function useJobPublication(id: string, processing: boolean) {
+  return useQuery({
+    queryKey: keys.publication(id),
+    queryFn: () => jobsApi.publication(id),
+    refetchInterval: processing ? 1000 : false,
+  });
+}
+
+/** Keyed by processed_at, so the panel refetches exactly when a run finishes. */
+export function useJobContent(id: string, processedAt: string | null | undefined) {
+  return useQuery({
+    queryKey: keys.content(id, processedAt),
+    queryFn: () => jobsApi.content(id),
+    enabled: Boolean(processedAt),
+  });
 }
 
 export function useCreateJob() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (payload: JobCreate) => jobsApi.create(payload),
+    mutationFn: ({ payload, idempotencyKey }: { payload: JobCreate; idempotencyKey: string }) =>
+      jobsApi.create(payload, idempotencyKey),
     onSuccess: () => client.invalidateQueries({ queryKey: keys.jobs }),
   });
 }
@@ -131,10 +164,19 @@ export function useDeleteCandidate() {
 
 // --- Applications ----------------------------------------------------------------
 
+/** Scores arrive a moment after the application, from the ProcessApplication
+ * workflow. Poll while an active application is still unscored — but give up after
+ * 20 tries, so a stopped worker does not mean polling forever. */
 export function useJobApplications(jobId: string) {
   return useQuery({
     queryKey: keys.jobApplications(jobId),
     queryFn: () => applicationsApi.forJob(jobId, { limit: 100 }),
+    refetchInterval: (query) => {
+      const awaitingScore = query.state.data?.items.some(
+        (a) => a.match_score === null && !TERMINAL_STAGES.has(a.stage),
+      );
+      return awaitingScore && query.state.dataUpdateCount < 20 ? 1500 : false;
+    },
   });
 }
 
@@ -148,7 +190,38 @@ export function useCandidateApplications(candidateId: string) {
 export function useApplyToJob(jobId: string) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (payload: ApplicationCreate) => applicationsApi.apply(jobId, payload),
+    mutationFn: ({
+      payload,
+      idempotencyKey,
+    }: {
+      payload: ApplicationCreate;
+      idempotencyKey: string;
+    }) => applicationsApi.apply(jobId, payload, idempotencyKey),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.applications }),
+  });
+}
+
+export function useApplicationHistory(applicationId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: keys.history(applicationId),
+    queryFn: () => applicationsApi.history(applicationId),
+    enabled,
+  });
+}
+
+export function useApplicationNotifications(applicationId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: keys.notifications(applicationId),
+    queryFn: () => applicationsApi.notifications(applicationId),
+    enabled,
+  });
+}
+
+/** Re-runs scoring and the confirmation — the recovery path after an outage. */
+export function useProcessApplication() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => applicationsApi.process(id),
     onSuccess: () => client.invalidateQueries({ queryKey: keys.applications }),
   });
 }
