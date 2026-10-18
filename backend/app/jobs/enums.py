@@ -11,12 +11,23 @@ from enum import StrEnum
 class JobStatus(StrEnum):
     """Lifecycle of a job posting.
 
-    Module 2 replaces the direct draft -> published transition with a Temporal workflow
-    that passes through PROCESSING while skills are extracted.
+        draft           --publish-->            processing
+        publish_failed  --publish (retry)-->    processing
+        processing      --workflow succeeds-->  published
+        processing      --workflow fails-->     publish_failed
+        any but closed  --close-->              closed
+        closed          --reopen-->             draft
+
+    PROCESSING is the Module 2 addition: publishing is no longer a field flip but a
+    Temporal workflow (app/publishing/workflow.py) that extracts skills and breaks the
+    description down, and only then marks the job PUBLISHED — the brief's "ready".
+    Candidates can apply only to a PUBLISHED job.
     """
 
     DRAFT = "draft"
+    PROCESSING = "processing"
     PUBLISHED = "published"
+    PUBLISH_FAILED = "publish_failed"
     CLOSED = "closed"
 
 
