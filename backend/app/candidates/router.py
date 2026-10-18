@@ -5,11 +5,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import PaginationDep
+from app.candidates import service as candidate_service
+from app.candidates.schemas import CandidateCreate, CandidateRead, CandidateUpdate
 from app.core.db import SessionDep
-from app.schemas.candidate import CandidateCreate, CandidateRead, CandidateUpdate
-from app.schemas.common import Page
-from app.services import candidate_service
+from app.core.pagination import Page, PaginationDep
 
 router = APIRouter()
 
@@ -30,12 +29,7 @@ async def list_candidates(
         search=search,
         min_experience=min_experience,
     )
-    return Page[CandidateRead](
-        items=[CandidateRead.model_validate(c) for c in candidates],
-        total=total,
-        limit=pagination.limit,
-        offset=pagination.offset,
-    )
+    return Page[CandidateRead].of(candidates, total, pagination)
 
 
 @router.post(

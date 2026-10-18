@@ -7,11 +7,11 @@ from sqlalchemy import CheckConstraint, DateTime, Enum, Index, Integer, String, 
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.enums import EmploymentType, JobStatus
-from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.core.models import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.jobs.enums import EmploymentType, JobStatus
 
 if TYPE_CHECKING:
-    from app.models.application import Application
+    from app.applications.models import Application
 
 
 class Job(Base, UUIDPrimaryKeyMixin, TimestampMixin):

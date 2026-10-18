@@ -11,16 +11,16 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import JobStatus
-from app.core.errors import JobNotOpenError, NotFoundError
-from app.models.job import Job
-from app.schemas.job import JobCreate, JobUpdate
+from app.jobs.enums import JobStatus
+from app.jobs.errors import JobNotFoundError, JobNotOpenError
+from app.jobs.models import Job
+from app.jobs.schemas import JobCreate, JobUpdate
 
 
 async def get_job(session: AsyncSession, job_id: uuid.UUID) -> Job:
     job = await session.get(Job, job_id)
     if job is None:
-        raise NotFoundError(f"Job {job_id} does not exist.")
+        raise JobNotFoundError(job_id)
     return job
 
 

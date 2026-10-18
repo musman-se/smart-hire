@@ -6,15 +6,15 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import DuplicateEmailError, NotFoundError
-from app.models.candidate import Candidate
-from app.schemas.candidate import CandidateCreate, CandidateUpdate
+from app.candidates.errors import CandidateNotFoundError, DuplicateEmailError
+from app.candidates.models import Candidate
+from app.candidates.schemas import CandidateCreate, CandidateUpdate
 
 
 async def get_candidate(session: AsyncSession, candidate_id: uuid.UUID) -> Candidate:
     candidate = await session.get(Candidate, candidate_id)
     if candidate is None:
-        raise NotFoundError(f"Candidate {candidate_id} does not exist.")
+        raise CandidateNotFoundError(candidate_id)
     return candidate
 
 

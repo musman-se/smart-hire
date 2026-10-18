@@ -1,7 +1,7 @@
 """Job endpoints.
 
 Routers stay thin: parse the request, call a service, shape the response. Every decision
-about what is allowed lives in app.services.job_service.
+about what is allowed lives in app.jobs.service.
 """
 
 import uuid
@@ -9,12 +9,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import PaginationDep
 from app.core.db import SessionDep
-from app.core.enums import JobStatus
-from app.schemas.common import Page
-from app.schemas.job import JobCreate, JobRead, JobUpdate
-from app.services import job_service
+from app.core.pagination import Page, PaginationDep
+from app.jobs import service as job_service
+from app.jobs.enums import JobStatus
+from app.jobs.schemas import JobCreate, JobRead, JobUpdate
 
 router = APIRouter()
 
@@ -35,12 +34,7 @@ async def list_jobs(
         skill=skill,
         search=search,
     )
-    return Page[JobRead](
-        items=[JobRead.model_validate(job) for job in jobs],
-        total=total,
-        limit=pagination.limit,
-        offset=pagination.offset,
-    )
+    return Page[JobRead].of(jobs, total, pagination)
 
 
 @router.post(

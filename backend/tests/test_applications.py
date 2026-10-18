@@ -11,7 +11,7 @@ from httpx import AsyncClient
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.application import Application
+from app.applications.models import Application
 from tests.factories import apply, make_candidate, make_job
 
 # --- Happy path ------------------------------------------------------------------
@@ -53,8 +53,8 @@ async def test_the_database_itself_refuses_a_duplicate(session: AsyncSession) ->
     guarantee comes from the unique constraint rather than from the Python pre-check.
     Two simultaneous requests can both pass that pre-check; neither can pass this.
     """
-    from app.models.candidate import Candidate
-    from app.models.job import Job
+    from app.candidates.models import Candidate
+    from app.jobs.models import Job
 
     job = Job(title="Race Condition Role", description="Testing the unique constraint.")
     candidate = Candidate(email=f"race-{uuid.uuid4().hex[:8]}@example.com", full_name="Racer")

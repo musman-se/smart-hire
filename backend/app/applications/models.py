@@ -12,12 +12,12 @@ from sqlalchemy import Enum, Float, ForeignKey, Index, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.enums import ApplicationStage
-from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.applications.enums import ApplicationStage
+from app.core.models import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
-    from app.models.candidate import Candidate
-    from app.models.job import Job
+    from app.candidates.models import Candidate
+    from app.jobs.models import Job
 
 
 class Application(Base, UUIDPrimaryKeyMixin, TimestampMixin):

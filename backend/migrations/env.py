@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import settings
 
-# Importing the models package registers every table on Base.metadata. Without this
+# Importing the model registry puts every table on Base.metadata. Without this
 # import autogenerate sees an empty metadata and proposes dropping everything.
 from app.models import Base
 

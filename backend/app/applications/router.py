@@ -10,12 +10,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import PaginationDep
+from app.applications import service as application_service
+from app.applications.enums import ApplicationStage
+from app.applications.schemas import ApplicationCreate, ApplicationRead, ApplicationStageUpdate
 from app.core.db import SessionDep
-from app.core.enums import ApplicationStage
-from app.schemas.application import ApplicationCreate, ApplicationRead, ApplicationStageUpdate
-from app.schemas.common import Page
-from app.services import application_service
+from app.core.pagination import Page, PaginationDep
 
 # Nested under a job.
 job_applications_router = APIRouter()
@@ -59,12 +58,7 @@ async def list_job_applications(
         job_id=job_id,
         stage=stage,
     )
-    return Page[ApplicationRead](
-        items=[ApplicationRead.model_validate(a) for a in applications],
-        total=total,
-        limit=pagination.limit,
-        offset=pagination.offset,
-    )
+    return Page[ApplicationRead].of(applications, total, pagination)
 
 
 @router.get("", response_model=Page[ApplicationRead], summary="List applications")
@@ -83,12 +77,7 @@ async def list_applications(
         candidate_id=candidate_id,
         stage=stage,
     )
-    return Page[ApplicationRead](
-        items=[ApplicationRead.model_validate(a) for a in applications],
-        total=total,
-        limit=pagination.limit,
-        offset=pagination.offset,
-    )
+    return Page[ApplicationRead].of(applications, total, pagination)
 
 
 @router.get("/{application_id}", response_model=ApplicationRead, summary="Get one application")

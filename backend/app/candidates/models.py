@@ -6,10 +6,10 @@ from sqlalchemy import CheckConstraint, Index, Integer, String
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.core.models import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
-    from app.models.application import Application
+    from app.applications.models import Application
 
 
 class Candidate(Base, UUIDPrimaryKeyMixin, TimestampMixin):

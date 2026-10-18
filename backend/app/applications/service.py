@@ -18,23 +18,24 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
-from app.core.enums import ApplicationStage, JobStatus
-from app.core.errors import (
+from app.applications.enums import ApplicationStage
+from app.applications.errors import (
     ApplicationLimitReachedError,
+    ApplicationNotFoundError,
     DuplicateApplicationError,
     InvalidStageTransitionError,
     JobCapacityReachedError,
-    JobNotOpenError,
     NotEligibleError,
-    NotFoundError,
 )
-from app.models.application import Application
-from app.models.candidate import Candidate
-from app.models.job import Job
-from app.schemas.application import ApplicationCreate
-from app.services.candidate_service import get_candidate
-from app.services.job_service import get_job
+from app.applications.models import Application
+from app.applications.schemas import ApplicationCreate
+from app.candidates.models import Candidate
+from app.candidates.service import get_candidate
+from app.core.config import settings
+from app.jobs.enums import JobStatus
+from app.jobs.errors import JobNotOpenError
+from app.jobs.models import Job
+from app.jobs.service import get_job
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ ALLOWED_TRANSITIONS: dict[ApplicationStage, set[ApplicationStage]] = {
 async def get_application(session: AsyncSession, application_id: uuid.UUID) -> Application:
     application = await session.get(Application, application_id)
     if application is None:
-        raise NotFoundError(f"Application {application_id} does not exist.")
+        raise ApplicationNotFoundError(application_id)
     return application
 
 

@@ -3,9 +3,10 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
-from app.schemas.job import _clean_skills
+from app.core.schemas import ReadModel
+from app.skills.schemas import normalise_skill_names
 
 
 class CandidateBase(BaseModel):
@@ -22,14 +23,13 @@ class CandidateBase(BaseModel):
     @field_validator("skills")
     @classmethod
     def normalise_skills(cls, value: list[str]) -> list[str]:
-        return _clean_skills(value)
+        return normalise_skill_names(value)
 
     @field_validator("email")
     @classmethod
     def normalise_email(cls, value: str) -> str:
         # Stored lowercase so uniqueness is case-insensitive in practice.
         return value.strip().lower()
-
 
 class CandidateCreate(CandidateBase):
     pass
@@ -49,12 +49,10 @@ class CandidateUpdate(BaseModel):
     @field_validator("skills")
     @classmethod
     def normalise_skills(cls, value: list[str] | None) -> list[str] | None:
-        return None if value is None else _clean_skills(value)
+        return None if value is None else normalise_skill_names(value)
 
 
-class CandidateRead(CandidateBase):
-    model_config = ConfigDict(from_attributes=True)
-
+class CandidateRead(CandidateBase, ReadModel):
     id: uuid.UUID
     created_at: datetime
     updated_at: datetime

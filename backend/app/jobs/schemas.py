@@ -1,6 +1,6 @@
 """Job schemas — what crosses the API boundary.
 
-Deliberately separate from app.models.job. The model has columns a client must never
+Deliberately separate from app.jobs.models. The model has columns a client must never
 set (status, published_at) and the API has validation the database does not express
 (title length, at least one non-blank skill).
 """
@@ -8,19 +8,11 @@ set (status, published_at) and the API has validation the database does not expr
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
-from app.core.enums import EmploymentType, JobStatus
-
-
-def _clean_skills(value: list[str]) -> list[str]:
-    """Trim, drop blanks, lowercase, de-duplicate — order preserved."""
-    seen: dict[str, None] = {}
-    for raw in value:
-        skill = raw.strip().lower()
-        if skill:
-            seen.setdefault(skill, None)
-    return list(seen)
+from app.core.schemas import ReadModel
+from app.jobs.enums import EmploymentType, JobStatus
+from app.skills.schemas import normalise_skill_names
 
 
 class JobBase(BaseModel):
@@ -36,7 +28,7 @@ class JobBase(BaseModel):
     @field_validator("required_skills")
     @classmethod
     def normalise_skills(cls, value: list[str]) -> list[str]:
-        return _clean_skills(value)
+        return normalise_skill_names(value)
 
 
 class JobCreate(JobBase):
@@ -63,12 +55,10 @@ class JobUpdate(BaseModel):
     @field_validator("required_skills")
     @classmethod
     def normalise_skills(cls, value: list[str] | None) -> list[str] | None:
-        return None if value is None else _clean_skills(value)
+        return None if value is None else normalise_skill_names(value)
 
 
-class JobRead(JobBase):
-    model_config = ConfigDict(from_attributes=True)
-
+class JobRead(JobBase, ReadModel):
     id: uuid.UUID
     status: JobStatus
     published_at: datetime | None

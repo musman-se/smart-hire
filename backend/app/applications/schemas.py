@@ -3,9 +3,10 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
-from app.core.enums import ApplicationStage
+from app.applications.enums import ApplicationStage
+from app.core.schemas import ReadModel
 
 
 class ApplicationCreate(BaseModel):
@@ -26,9 +27,7 @@ class ApplicationStageUpdate(BaseModel):
     stage: ApplicationStage
 
 
-class ApplicationRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class ApplicationRead(ReadModel):
     id: uuid.UUID
     job_id: uuid.UUID
     candidate_id: uuid.UUID
