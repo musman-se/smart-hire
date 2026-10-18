@@ -1,9 +1,12 @@
 # SmartHire — Backend
 
-Core recruitment platform for SmartHire. **Module 1: Foundation + Core Services.**
+Core recruitment platform for SmartHire. **Modules 1 and 2:** foundation and core
+services, plus the application workflow and the job publishing pipeline.
 
-Job and candidate management, the application pipeline, and the three business rules the
-brief names: duplicate applications, eligibility checks, and application limits.
+Job and candidate management with the brief's three rules — duplicate applications,
+eligibility, application limits — enforced under concurrency; job publishing as a
+Temporal workflow that extracts structured content; application tracking, scoring and
+confirmation; idempotent creates.
 
 ## Stack
 
@@ -16,7 +19,9 @@ brief names: duplicate applications, eligibility checks, and application limits.
 | ORM | SQLAlchemy 2.0 async + asyncpg | Async all the way down, no blocking driver |
 | Migrations | Alembic | Reviewable, reversible schema history |
 | Config | pydantic-settings | Every setting from an environment variable, validated at startup |
-| Tests | pytest + httpx | In-process ASGI transport, real Postgres |
+| Workflows | Temporal (Python SDK) | Durable, retried, observable multi-step processes |
+| Cache | Redis | Idempotency records with expiry |
+| Tests | pytest + httpx | In-process ASGI transport; real Postgres, Temporal and Redis |
 | Local infra | Docker Compose | One command to a working stack |
 
 ## Running it
@@ -31,10 +36,12 @@ docker compose run --rm seed  # optional: demo data
 
 - API: http://localhost:8000
 - Interactive docs: http://localhost:8000/docs
-- Postgres: `localhost:5432`
+- Temporal UI: http://localhost:8233
+- Postgres: `localhost:5432` · Redis: `localhost:6379`
 
 Compose starts `db`, then a one-shot `migrate` that runs `alembic upgrade head`, and
-only then `api`. The API therefore never starts against an out-of-date schema.
+only then `api` and `worker`. Neither ever runs against an out-of-date schema. The worker
+does not hot-reload: `docker compose restart worker` after editing workflow code.
 
 ### Configuration
 
@@ -49,7 +56,10 @@ all of them with their defaults. The backend reads the root `.env` and then
 | Pool | `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT_SECONDS`, `DB_POOL_RECYCLE_SECONDS`, `DB_ECHO` |
 | App | `APP_NAME`, `ENVIRONMENT`, `LOG_LEVEL` |
 | Rules | `MAX_APPLICATIONS_PER_CANDIDATE`, `DEFAULT_PAGE_SIZE`, `MAX_PAGE_SIZE` |
-| Tests | `TEST_DATABASE_NAME` |
+| Temporal | `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` |
+| Workflows | `PUBLISHING_MAX_ATTEMPTS`, `PUBLISHING_FAULT_RATE`, `APPLICATION_PROCESSING_MAX_ATTEMPTS` |
+| Redis | `REDIS_URL`, `REDIS_TIMEOUT_SECONDS`, `IDEMPOTENCY_TTL_SECONDS`, `IDEMPOTENCY_LOCK_SECONDS` |
+| Tests | `TEST_DATABASE_NAME`, `TEST_REDIS_URL` |
 
 ### Without Docker — API local, Postgres in a container
 
@@ -62,6 +72,7 @@ pip install -e ".[dev]"
 
 alembic upgrade head
 uvicorn app.main:app --reload
+python -m app.worker              # in a second terminal, with Temporal running
 ```
 
 ## API
@@ -77,7 +88,9 @@ All paths, with the interactive version at `/docs`.
 | GET | `/jobs/{job_id}` | Fetch one |
 | PATCH | `/jobs/{job_id}` | Partial update; unsent fields untouched |
 | DELETE | `/jobs/{job_id}` | Delete; applications cascade |
-| POST | `/jobs/{job_id}/publish` | draft → published |
+| POST | `/jobs/{job_id}/publish` | **202** — starts the publishing workflow; job → `processing` |
+| GET | `/jobs/{job_id}/publication` | Job status + workflow status + live step |
+| GET | `/jobs/{job_id}/content` | Extracted sections, keywords, mentioned skills |
 | POST | `/jobs/{job_id}/close` | → closed |
 | POST | `/jobs/{job_id}/reopen` | closed → draft |
 
@@ -100,7 +113,14 @@ All paths, with the interactive version at `/docs`.
 | GET | `/applications` | List. Filters: `job_id`, `candidate_id`, `stage` |
 | GET | `/applications/{application_id}` | Fetch one |
 | POST | `/applications/{application_id}/stage` | Advance through the pipeline |
-| DELETE | `/applications/{application_id}` | Withdraw |
+| DELETE | `/applications/{application_id}` | Withdraw — moves to `withdrawn`, keeps the row |
+| GET | `/applications/{application_id}/history` | Every stage change, oldest first |
+| GET | `/applications/{application_id}/notifications` | Messages sent about it |
+| POST | `/applications/{application_id}/process` | **202** — (re)run scoring and the confirmation |
+
+`POST /jobs`, `POST /candidates` and `POST /jobs/{job_id}/applications` accept an
+`Idempotency-Key` header: a retry with the same key and body gets the original response
+(marked `Idempotent-Replayed: true`) and performs nothing twice.
 
 ### Skills
 
@@ -148,6 +168,9 @@ request and in the `X-Request-ID` response header.
 | `application_limit_reached` | 409 | Candidate is at their active application limit |
 | `job_capacity_reached` | 409 | Job hit its `max_applications` cap |
 | `invalid_stage_transition` | 409 | Illegal move through the hiring pipeline |
+| `idempotency_in_progress` | 409 | Same Idempotency-Key, first request still running |
+| `idempotency_key_reused` | 422 | Same Idempotency-Key, different body |
+| `workflow_unavailable` | 503 | Temporal unreachable; nothing was changed |
 | `internal_error` | 500 | Unexpected; details are logged, not returned |
 
 ## Business rules
@@ -157,7 +180,7 @@ also pre-checks to return a friendly 409 on the common path, but the constraint 
 makes the rule true — two concurrent requests can both pass a Python check before either
 writes.
 
-**Eligibility.** The job must be `published`; the candidate must meet
+**Eligibility.** The job must be `published` (not `processing`); the candidate must meet
 `min_experience_years`; if the job lists `required_skills`, the candidate must have at
 least one of them.
 
@@ -178,12 +201,17 @@ Organised by domain, then by layer — see
 ```
 app/
 ├── main.py            FastAPI app: middleware, handlers, router table
+├── worker.py          Temporal worker: registers every workflow and activity
 ├── models.py          Model registry, read by Alembic
-├── health.py          Liveness and readiness
-├── core/              config, db, base models, errors, schemas, pagination, logging
+├── health.py          Liveness and readiness (Postgres, Temporal, Redis)
+├── core/              config, db, base models, errors, schemas, pagination, logging,
+│                      temporal client, redis client, idempotency
 ├── jobs/              models · schemas · service · router · errors · enums
+├── publishing/        content analysis · activities · workflow · publisher · router
 ├── candidates/        models · schemas · service · router · errors
 ├── applications/      models · schemas · service · router · errors · enums
+│                      scoring · activities · workflow · processor
+├── notifications/     the record of every message sent
 └── skills/            models · schemas · service · router
 migrations/            Alembic revisions — see docs/MIGRATIONS.md
 tests/
@@ -200,7 +228,7 @@ docker compose up -d db     # the suite needs a real Postgres
 pytest
 ```
 
-50 tests. They run against a `smarthire_test` database, created on demand and dropped at
+103 tests. They run against a `smarthire_test` database, created on demand and dropped at
 the end; `test_migrations.py` replays the whole migration history against its own
 scratch database. Deliberately not SQLite: the unique constraint, array containment and native
 enums either behave differently there or do not exist, and a suite that passes on a
@@ -219,17 +247,14 @@ alembic check               # fail if models and migrations disagree
 - [Architecture and design decisions](../docs/ARCHITECTURE.md)
 - [Database design — normalisation, indexes, concurrency](../docs/DATABASE.md)
 - [How migrations work](../docs/MIGRATIONS.md)
+- [Workflows — publishing and application processing](../docs/WORKFLOWS.md)
 
 ## Module roadmap
 
 | Module | Scope | Status |
 |---|---|---|
-| 1 | Foundation + core services | **This** |
-| 2 | Business logic + Temporal workflows | Next |
-| 3 | Event-driven system + observability | Later |
+| 1 | Foundation + core services | **Complete** |
+| 2 | Application workflow + publishing pipeline | **Complete** — see [docs/WORKFLOWS.md](../docs/WORKFLOWS.md) |
+| 3 | Event-driven system + observability | Next |
 | 4 | Semantic layer — embeddings, vector search | Later |
 | 5 | AI assistant — LangGraph, recommendations | Later |
-
-Out of scope here: Temporal, Kafka, Celery, OpenTelemetry, GenAI. The seams they will
-attach to — the publishing transition, the service layer, the request-id context — are in
-place.
