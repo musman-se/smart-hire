@@ -34,6 +34,7 @@ x-backend: &backend
     # The port *inside* the Compose network is always 5432. DB_HOST_PORT only changes
     # where the database is published on your machine.
     POSTGRES_PORT: 5432
+    TEMPORAL_ADDRESS: temporal:7233
 
 services:
   db:
@@ -54,6 +55,36 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+      start_period: 10s
+
+  # Temporal: the workflow engine. It stores every workflow's history, hands tasks to
+  # workers, and retries what fails. `server start-dev` runs the whole server — frontend,
+  # history, matching — in one process with SQLite storage and the web UI built in. That
+  # is a development topology: production runs the services separately against
+  # Postgres or Cassandra, or uses Temporal Cloud.
+  temporal:
+    image: temporalio/temporal:1.9.1
+    container_name: smarthire-temporal
+    restart: unless-stopped
+    command:
+      - server
+      - start-dev
+      - --ip=0.0.0.0
+      - --ui-ip=0.0.0.0
+      # Under the image user's home: a fresh named volume copies that directory's
+      # ownership, so the non-root server can write to it. Workflow history survives
+      # `docker compose down`; `down -v` wipes it with the database.
+      - --db-filename=/home/temporal/temporal.db
+    ports:
+      - "${TEMPORAL_HOST_PORT:-7233}:7233"   # gRPC: workers and the API connect here
+      - "${TEMPORAL_UI_HOST_PORT:-8233}:8233"  # web UI: http://localhost:8233
+    volumes:
+      - temporal-data:/home/temporal
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "localhost:7233"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
       start_period: 10s
 
   # One-shot: brings the schema up to date, then exits. Running migrations as a distinct
@@ -124,3 +155,4 @@ services:
 
 volumes:
   pgdata:
+  temporal-data:
