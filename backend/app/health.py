@@ -21,7 +21,6 @@ into a full one.
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.db import SessionDep
 from app.core.redis import redis_is_reachable
@@ -39,7 +38,10 @@ async def liveness() -> dict[str, str]:
 async def readiness(session: SessionDep) -> JSONResponse:
     try:
         await session.execute(text("SELECT 1"))
-    except (SQLAlchemyError, OSError) as exc:
+    except Exception as exc:  # noqa: BLE001 - any failure to answer is "not ready"
+        # Broad on purpose. A refused login, "the database system is starting up", a
+        # timeout: each surfaces as a different exception class, and every one of them
+        # must read as 503 to an orchestrator — never as a 500 from the probe itself.
         return JSONResponse(
             status_code=503,
             content={

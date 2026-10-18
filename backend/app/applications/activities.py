@@ -35,6 +35,13 @@ logger = logging.getLogger(__name__)
 APPLICATION_NOT_FOUND = "ApplicationNotFound"
 
 
+def _fit(text: str, limit: int) -> str:
+    """Shorten to a column's length with an ellipsis. A job title may be 200 characters,
+    and "We received your application: " plus 200 does not fit notifications.subject
+    (VARCHAR(200)) — the insert would fail on every retry and the email never go out."""
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 class ApplicationActivities:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = session_factory
@@ -104,7 +111,7 @@ class ApplicationActivities:
                     kind="application_received",
                     channel="email",
                     recipient=candidate.email,
-                    subject=f"We received your application: {job.title}",
+                    subject=_fit(f"We received your application: {job.title}", 200),
                     body=(
                         f"Hi {candidate.full_name},\n\n"
                         f"Thank you for applying for {job.title}. Your application is in, "
@@ -126,10 +133,10 @@ class ApplicationActivities:
         # The safe shape is insert as "pending", call the provider with the dedupe key as
         # *its* idempotency key, then mark "sent" — a retry then re-calls the provider,
         # which recognises the key and does not send twice.
+        # The recipient's address stays out of the log: it is personal data, and the
+        # notifications row already records it for anyone entitled to see it.
         logger.info(
-            "notification_sent kind=application_received channel=email to=%s app=%s",
-            candidate.email,
-            application_id,
+            "notification_sent kind=application_received channel=email app=%s", application_id
         )
         return True
 

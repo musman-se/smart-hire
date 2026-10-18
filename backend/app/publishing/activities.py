@@ -21,6 +21,7 @@ The activities are methods on a class holding a session factory, so the worker b
 them to the real database and the tests bind them to the test database.
 """
 
+import asyncio
 import logging
 import random
 import uuid
@@ -102,21 +103,23 @@ class PublishingActivities:
         async with self._sessions() as session:
             job = await self._load_job(session, job_id)
             known = set(await session.scalars(select(Skill.name)))
-            text = f"{job.title}\n{job.description}"
+            title, description = job.title, job.description
             # The recruiter's own required skills count as vocabulary too, so a niche
             # skill they listed is found in the text even on a fresh installation.
             vocabulary = known | KNOWN_SKILLS | set(job.required_skills)
-            return SkillsAndKeywords(
-                skills=find_skills(text, vocabulary),
-                keywords=extract_keywords(job.title, job.description),
-            )
+
+        # Text analysis is CPU work. Run in a thread, it cannot stall the worker's event
+        # loop — and with it every other activity and heartbeat that loop is serving.
+        skills = await asyncio.to_thread(find_skills, f"{title}\n{description}", vocabulary)
+        keywords = await asyncio.to_thread(extract_keywords, title, description)
+        return SkillsAndKeywords(skills=skills, keywords=keywords)
 
     @activity.defn(name="break_down_description")
     async def break_down_description(self, job_id: str) -> DescriptionBreakdown:
         """Brief step 2: break the description into its components."""
         async with self._sessions() as session:
-            job = await self._load_job(session, job_id)
-            return break_down_description(job.description)
+            description = (await self._load_job(session, job_id)).description
+        return await asyncio.to_thread(break_down_description, description)
 
     @activity.defn(name="store_job_content")
     async def store_job_content(self, data: StoreContentInput) -> None:

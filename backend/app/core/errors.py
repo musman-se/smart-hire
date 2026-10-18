@@ -58,9 +58,12 @@ class UnprocessableError(DomainError):
     code = "unprocessable"
 
 
-def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
+def _error_response(
+    status_code: int, code: str, message: str, headers: dict[str, str] | None = None
+) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
+        headers=headers,
         content={
             "error": {
                 "code": code,
@@ -92,7 +95,10 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(StarletteHTTPException)
     async def handle_http_exception(_: Request, exc: StarletteHTTPException) -> JSONResponse:
-        return _error_response(exc.status_code, "http_error", str(exc.detail))
+        # exc.headers carries what the status code requires — Allow on a 405.
+        return _error_response(
+            exc.status_code, "http_error", str(exc.detail), getattr(exc, "headers", None)
+        )
 
     @app.exception_handler(Exception)
     async def handle_unexpected(_: Request, exc: Exception) -> JSONResponse:

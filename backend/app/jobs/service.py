@@ -67,7 +67,9 @@ async def create_job(session: AsyncSession, payload: JobCreate) -> Job:
 
 
 async def update_job(session: AsyncSession, job_id: uuid.UUID, payload: JobUpdate) -> Job:
-    job = await get_job(session, job_id)
+    # Locked, like every other read-decide-write on a job: without it, a publish or a
+    # close committed between this read and the write below would not stop the edit.
+    job = await get_job(session, job_id, lock=True)
 
     if job.status is JobStatus.CLOSED:
         raise JobNotOpenError("A closed job cannot be edited. Reopen it first.")

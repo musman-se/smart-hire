@@ -17,7 +17,7 @@ Every variable is listed, with its default, in `.env.example` at the repository 
 from functools import cached_property
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -118,6 +118,19 @@ class Settings(BaseSettings):
     test_database_name: str = "smarthire_test"
     # A separate Redis logical database (0-15 exist by default), flushed by the tests.
     test_redis_url: str = "redis://localhost:6379/15"
+
+    @model_validator(mode="after")
+    def _check_consistency(self) -> "Settings":
+        """Mistakes that would otherwise pass startup and break requests later."""
+        if self.default_page_size > self.max_page_size:
+            raise ValueError(
+                f"DEFAULT_PAGE_SIZE ({self.default_page_size}) cannot exceed "
+                f"MAX_PAGE_SIZE ({self.max_page_size})"
+            )
+        for name in ("redis_url", "test_redis_url"):
+            if not getattr(self, name).startswith(("redis://", "rediss://", "unix://")):
+                raise ValueError(f"{name.upper()} must start with redis://, rediss:// or unix://")
+        return self
 
     @cached_property
     def database_url(self) -> str:

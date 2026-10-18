@@ -35,6 +35,7 @@ from app.applications.schemas import ApplicationCreate
 from app.candidates.models import Candidate
 from app.candidates.service import get_candidate
 from app.core.config import settings
+from app.core.errors import DomainError
 from app.jobs.enums import JobStatus
 from app.jobs.errors import JobNotOpenError
 from app.jobs.models import Job
@@ -122,6 +123,20 @@ async def _count_job_applications(session: AsyncSession, job_id: uuid.UUID) -> i
 
 
 async def apply_to_job(
+    session: AsyncSession, job_id: uuid.UUID, payload: ApplicationCreate
+) -> Application:
+    try:
+        return await _apply(session, job_id, payload)
+    except DomainError:
+        # A refusal ends the transaction at once. Otherwise the job and candidate row
+        # locks taken below would be held while the caller stores the refusal (the
+        # idempotency record, in Redis) and the request winds down — serialising every
+        # other application to this job behind a network call.
+        await session.rollback()
+        raise
+
+
+async def _apply(
     session: AsyncSession, job_id: uuid.UUID, payload: ApplicationCreate
 ) -> Application:
     # Lock the job row, then the candidate row, until this transaction commits.

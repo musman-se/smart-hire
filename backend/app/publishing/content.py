@@ -196,6 +196,10 @@ STOPWORDS = frozenset(
 
 _TOKEN = re.compile(r"[a-z][a-z0-9+#]*(?:[.\-][a-z0-9+#]+)*")
 
+# job_keywords.keyword is VARCHAR(64); job_keywords.score must be > 0.
+KEYWORD_MAX_LENGTH = 64
+MIN_KEYWORD_SCORE = 0.001
+
 
 @dataclass
 class Keyword:
@@ -209,11 +213,16 @@ def extract_keywords(title: str, description: str, *, limit: int = 12) -> list[K
     Term frequency with stopwords removed; a word in the title counts three times,
     because a title is the recruiter's own one-line summary. Scores are in (0, 1], the
     top term scoring 1.0. Ties sort alphabetically, so the output is deterministic.
+
+    Both limits of the job_keywords table are respected here, where they can be: a term
+    is cut to 64 characters *before* counting, so two long terms that share a prefix
+    merge instead of colliding on the (job_id, keyword) primary key; and a score never
+    rounds down to 0, which the score > 0 check would refuse.
     """
     counts: Counter[str] = Counter()
     for weight, text in ((3, title), (1, description)):
         for token in _TOKEN.findall(text.lower()):
-            token = token.strip(".-")
+            token = token.strip(".-")[:KEYWORD_MAX_LENGTH]
             if len(token) >= 3 and token not in STOPWORDS and not token.isdigit():
                 counts[token] += weight
 
@@ -221,7 +230,10 @@ def extract_keywords(title: str, description: str, *, limit: int = 12) -> list[K
         return []
     top = max(counts.values())
     ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
-    return [Keyword(keyword=word[:64], score=round(count / top, 3)) for word, count in ranked]
+    return [
+        Keyword(keyword=word, score=max(round(count / top, 3), MIN_KEYWORD_SCORE))
+        for word, count in ranked
+    ]
 
 
 # ----------------------------------------------------------------------------- skills
@@ -250,20 +262,44 @@ KNOWN_SKILLS = frozenset(
 AMBIGUOUS_SKILLS = frozenset({"go", "r", "c", "d", "less", "make", "spring", "rest", "express"})
 
 
+# A word in a skill or in text: letters and digits, plus the symbols skill names use
+# inside them — "c++", "c#", "node.js", "ci/cd". Hyphens are treated as spaces, so
+# "machine-learning" and "machine learning" are the same phrase.
+_SKILL_WORD = re.compile(r"[a-z0-9][a-z0-9+#./]*")
+
+
+def _words(text: str) -> list[str]:
+    return [w.rstrip("./") for w in _SKILL_WORD.findall(text.lower().replace("-", " "))]
+
+
 def find_skills(text: str, vocabulary: Iterable[str]) -> dict[str, int]:
     """Skills from the vocabulary that the text mentions, with a mention count.
 
     Matched as whole words or phrases, so "java" does not match "javascript", and
     symbols in names ("c++", "node.js") are taken literally.
+
+    One pass over the text, whatever the size of the vocabulary: the text is split into
+    words once, and every run of one to N consecutive words (N = the longest skill, in
+    words) is looked up in a set. The first version ran one regular-expression scan of
+    the whole text *per skill* — cost growing with vocabulary x text, which a large
+    skills table and a long description turn into seconds of CPU per publish.
     """
-    lowered = text.lower()
-    found: dict[str, int] = {}
-    for skill in sorted(set(vocabulary)):
-        if skill in AMBIGUOUS_SKILLS or not skill:
+    wanted: dict[tuple[str, ...], str] = {}
+    for skill in vocabulary:
+        if not skill or skill in AMBIGUOUS_SKILLS:
             continue
-        spelling = re.escape(skill).replace(r"\-", r"[\s-]")  # machine-learning ~ machine learning
-        pattern = rf"(?<![a-z0-9]){spelling}(?![a-z0-9+#])"
-        mentions = len(re.findall(pattern, lowered))
-        if mentions:
-            found[skill] = mentions
+        phrase = tuple(_words(skill))
+        if phrase:
+            wanted.setdefault(phrase, skill)
+    if not wanted:
+        return {}
+
+    longest = max(len(phrase) for phrase in wanted)
+    words = _words(text)
+    found: dict[str, int] = {}
+    for start in range(len(words)):
+        for size in range(1, longest + 1):
+            skill = wanted.get(tuple(words[start : start + size]))
+            if skill is not None:
+                found[skill] = found.get(skill, 0) + 1
     return found
