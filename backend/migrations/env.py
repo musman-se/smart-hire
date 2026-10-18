@@ -1,11 +1,16 @@
 """Alembic environment.
 
-Two things differ from the generated template:
+Three things differ from the generated template:
 
 1. The database URL comes from app settings, not from alembic.ini. One source of truth,
-   so migrations cannot run against a different database than the app.
+   so migrations cannot run against a different database than the app. Code that runs
+   Alembic programmatically — tests/test_migrations.py — may pass its own URL in
+   `config.attributes["database_url"]` to target a scratch database instead.
 2. target_metadata is app Base.metadata, which is what makes `--autogenerate` able to
    diff the models against the live schema.
+3. Logging is configured from alembic.ini only when Alembic runs from the command line.
+   fileConfig() disables every logger that already exists, which would silence the
+   application's loggers for the rest of a test run.
 """
 
 import asyncio
@@ -23,9 +28,10 @@ from app.core.config import settings
 from app.models import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url)
+database_url = config.attributes.get("database_url", settings.database_url)
+config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
-if config.config_file_name is not None:
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
@@ -34,7 +40,7 @@ target_metadata = Base.metadata
 def run_migrations_offline() -> None:
     """Emit SQL to stdout instead of running it — useful for review before production."""
     context.configure(
-        url=settings.database_url,
+        url=database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
