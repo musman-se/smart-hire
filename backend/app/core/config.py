@@ -74,6 +74,17 @@ class Settings(BaseSettings):
     # mismatch is silent: workflows wait forever for a worker that never polls.
     temporal_task_queue: str = "smarthire"
 
+    # --- Redis ---------------------------------------------------------------------
+    # Compose overrides the host to "redis" inside its network.
+    redis_url: str = "redis://localhost:6379/0"
+    redis_timeout_seconds: float = Field(default=1.0, gt=0)
+
+    # --- Idempotency keys ------------------------------------------------------------
+    # How long a completed request's response is kept for replay.
+    idempotency_ttl_seconds: int = Field(default=86_400, ge=60)
+    # How long an in-progress claim lasts if the process dies before finishing.
+    idempotency_lock_seconds: int = Field(default=60, ge=1)
+
     # --- Publishing workflow ---------------------------------------------------------
     # Attempts per activity before a publish is given up and the job marked failed.
     publishing_max_attempts: int = Field(default=5, ge=1, le=20)
@@ -94,6 +105,8 @@ class Settings(BaseSettings):
     # --- Tests ---------------------------------------------------------------------
     # The suite creates this database on the same server and drops it afterwards.
     test_database_name: str = "smarthire_test"
+    # A separate Redis logical database (0-15 exist by default), flushed by the tests.
+    test_redis_url: str = "redis://localhost:6379/15"
 
     @cached_property
     def database_url(self) -> str:

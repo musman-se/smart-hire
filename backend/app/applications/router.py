@@ -8,7 +8,8 @@ flat /applications path, because by then the application has its own identity.
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Request, status
+from fastapi.responses import JSONResponse
 
 from app.applications import service as application_service
 from app.applications.enums import ApplicationStage
@@ -19,6 +20,7 @@ from app.applications.schemas import (
     StageChangeRead,
 )
 from app.core.db import SessionDep
+from app.core.idempotency import IdempotencyDep, IdempotencyKey
 from app.core.pagination import Page, PaginationDep
 
 # Nested under a job.
@@ -39,10 +41,26 @@ router = APIRouter()
     },
 )
 async def apply_to_job(
-    session: SessionDep, job_id: uuid.UUID, payload: ApplicationCreate
-) -> ApplicationRead:
-    application = await application_service.apply_to_job(session, job_id, payload)
-    return ApplicationRead.model_validate(application)
+    session: SessionDep,
+    idempotency: IdempotencyDep,
+    request: Request,
+    job_id: uuid.UUID,
+    payload: ApplicationCreate,
+    idempotency_key: IdempotencyKey = None,
+) -> JSONResponse:
+    # Duplicate prevention alone would answer a retried submission with 409 "already
+    # applied". With an Idempotency-Key, the retry gets the original 201.
+    async def apply() -> ApplicationRead:
+        application = await application_service.apply_to_job(session, job_id, payload)
+        return ApplicationRead.model_validate(application)
+
+    return await idempotency.run(
+        key=idempotency_key,
+        request=request,
+        body=payload,
+        status_code=status.HTTP_201_CREATED,
+        operation=apply,
+    )
 
 
 @job_applications_router.get(

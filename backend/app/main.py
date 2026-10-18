@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.core.db import engine
 from app.core.errors import register_exception_handlers
 from app.core.logging import RequestContextMiddleware, configure_logging
+from app.core.redis import close_redis
 from app.core.schemas import ErrorResponse
 from app.core.temporal import close_temporal_client
 from app.jobs import router as jobs
@@ -32,6 +33,7 @@ async def lifespan(_: FastAPI):
     yield
     await engine.dispose()
     await close_temporal_client()
+    await close_redis()
 
 
 app = FastAPI(
