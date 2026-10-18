@@ -89,7 +89,7 @@ scripts/     seed.py (demo data via the API), index-benchmark/
 
 ```bash
 docker compose up -d db temporal redis
-cd backend && pytest        # 103 tests: real Postgres, real Temporal, real Redis
+cd backend && pytest        # 125 tests: real Postgres, real Temporal, real Redis
 ruff check .
 cd ../frontend && npm run typecheck
 ```

@@ -114,7 +114,8 @@ class Settings(BaseSettings):
     max_page_size: int = Field(default=100, ge=1)
 
     # --- Tests ---------------------------------------------------------------------
-    # The suite creates this database on the same server and drops it afterwards.
+    # The suite creates this database on the same server if missing, and drops its
+    # tables afterwards.
     test_database_name: str = "smarthire_test"
     # A separate Redis logical database (0-15 exist by default), flushed by the tests.
     test_redis_url: str = "redis://localhost:6379/15"

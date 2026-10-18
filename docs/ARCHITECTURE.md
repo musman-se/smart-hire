@@ -213,7 +213,7 @@ single event loop for its connection pool.
 
 ### 4.6 Tests run on real PostgreSQL
 
-**Decision.** A `smarthire_test` database, created on demand, dropped afterwards.
+**Decision.** A `smarthire_test` database, created on demand; its tables are dropped afterwards.
 
 **Alternative rejected.** SQLite in memory.
 
@@ -260,7 +260,8 @@ leaving a half-migrated application serving traffic.
 
 ### 4.10 Terminal stages do not count toward the limit
 
-**Decision.** `hired` and `rejected` applications are excluded from a candidate's active count.
+**Decision.** `hired`, `rejected` and (since Module 2) `withdrawn` applications are excluded
+from a candidate's active count.
 
 **Why.** Otherwise a candidate rejected ten times is permanently locked out of the
 platform — a rule that punishes exactly the people who most need to keep applying. The
@@ -378,10 +379,17 @@ does all three natively; Postgres would need a cleanup job. Losing Redis loses o
 replays, so it fails open: the database constraints still refuse duplicates. Layered
 defence: the key upgrades "refused" to "the original answer"; it is never the only guard.
 
-**Tradeoff.** The response is stored after the commit, not with it. A crash between the
-two means the retry meets the duplicate constraint (409) rather than a replay — still
-correct data, a less friendly answer. Keys are scoped by endpoint; once authentication
-exists they should be scoped per user too.
+**Tradeoff.** The response is stored after the commit, not with it. If the process dies
+between the two, the claim stays "in progress" until it expires (60 s); a retry after
+that runs the action again. For an application or a candidate the database then refuses
+the duplicate (409) — correct data, a less friendly answer. **For a job, which has no
+natural unique key, the retry creates a second job.** Closing that window means storing
+the key in Postgres in the same transaction as the row it protects — the upgrade path if
+it ever matters. Only 2xx and 4xx are stored; a 5xx releases the key. Keys are scoped by
+endpoint; once authentication exists they should be scoped per user too.
+
+The console renews its key once the server has answered: a key belongs to one attempt to
+do one thing, and reusing it after a refusal would replay that refusal for a day.
 
 ### 4.20 Withdrawal is a stage, history is append-only
 
