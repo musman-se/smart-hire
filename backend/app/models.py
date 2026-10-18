@@ -12,7 +12,7 @@ Anything that touches the database outside a request — Alembic, the test suite
 background worker — imports this module first.
 """
 
-from app.applications.models import Application
+from app.applications.models import Application, ApplicationStageChange
 from app.candidates.models import Candidate
 from app.core.models import Base
 from app.jobs.models import Job
@@ -21,6 +21,7 @@ from app.skills.models import Skill, candidate_skills, job_skills
 
 __all__ = [
     "Application",
+    "ApplicationStageChange",
     "Base",
     "Candidate",
     "Job",

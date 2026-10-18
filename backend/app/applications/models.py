@@ -6,9 +6,21 @@ Module 2 will compute. A foreign key has nowhere to put any of that.
 """
 
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Enum, Float, ForeignKey, Index, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Identity,
+    Index,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -72,3 +84,45 @@ class Application(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<Application {self.id} job={self.job_id} candidate={self.candidate_id}>"
+
+
+class ApplicationStageChange(Base):
+    """One move through the hiring pipeline. Append-only: rows are inserted, never
+    updated or deleted, so together they are the application's history.
+
+    `applications.stage` says where an application *is*; this table says how it got
+    there and when — which is what "application tracking" means to a candidate, and
+    what Module 3's analytics need for time-to-hire and stage conversion rates. Each
+    row is written in the same transaction as the stage change it records, so the
+    history can never disagree with the current stage.
+    """
+
+    __tablename__ = "application_stage_changes"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    application_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("applications.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # NULL for the first entry: an application comes from nowhere into APPLIED.
+    from_stage: Mapped[ApplicationStage | None] = mapped_column(
+        Enum(ApplicationStage, name="application_stage")
+    )
+    to_stage: Mapped[ApplicationStage] = mapped_column(
+        Enum(ApplicationStage, name="application_stage"), nullable=False
+    )
+    note: Mapped[str | None] = mapped_column(Text)
+    changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __mapper_args__ = {"eager_defaults": True}
+    __table_args__ = (
+        # One application's history, in order — the only way this table is read.
+        Index(
+            "ix_application_stage_changes_application_id_changed_at",
+            "application_id",
+            "changed_at",
+        ),
+    )

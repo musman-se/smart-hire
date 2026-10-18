@@ -12,7 +12,12 @@ from fastapi import APIRouter, Query, status
 
 from app.applications import service as application_service
 from app.applications.enums import ApplicationStage
-from app.applications.schemas import ApplicationCreate, ApplicationRead, ApplicationStageUpdate
+from app.applications.schemas import (
+    ApplicationCreate,
+    ApplicationRead,
+    ApplicationStageUpdate,
+    StageChangeRead,
+)
 from app.core.db import SessionDep
 from app.core.pagination import Page, PaginationDep
 
@@ -95,14 +100,30 @@ async def get_application(session: SessionDep, application_id: uuid.UUID) -> App
 async def advance_stage(
     session: SessionDep, application_id: uuid.UUID, payload: ApplicationStageUpdate
 ) -> ApplicationRead:
-    application = await application_service.advance_stage(session, application_id, payload.stage)
+    application = await application_service.advance_stage(
+        session, application_id, payload.stage, payload.note
+    )
     return ApplicationRead.model_validate(application)
+
+
+@router.get(
+    "/{application_id}/history",
+    response_model=list[StageChangeRead],
+    summary="An application's stage history, oldest first",
+)
+async def get_history(session: SessionDep, application_id: uuid.UUID) -> list[StageChangeRead]:
+    changes = await application_service.get_history(session, application_id)
+    return [StageChangeRead.model_validate(change) for change in changes]
 
 
 @router.delete(
     "/{application_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Withdraw an application",
+    description=(
+        "Moves the application to the terminal `withdrawn` stage. Nothing is deleted: "
+        "the application and its history remain readable."
+    ),
 )
 async def withdraw_application(session: SessionDep, application_id: uuid.UUID) -> None:
     await application_service.withdraw_application(session, application_id)
