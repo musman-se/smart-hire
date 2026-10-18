@@ -59,10 +59,11 @@ class Job(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     __table_args__ = (
-        CheckConstraint("min_experience_years >= 0", name="ck_jobs_min_experience_non_negative"),
+        # Named without the "ck_jobs_" prefix: the naming convention adds it.
+        CheckConstraint("min_experience_years >= 0", name="min_experience_non_negative"),
         CheckConstraint(
             "max_applications IS NULL OR max_applications > 0",
-            name="ck_jobs_max_applications_positive",
+            name="max_applications_positive",
         ),
         # Recruiters browse by status constantly; this is the hottest filter in the API.
         Index("ix_jobs_status", "status"),

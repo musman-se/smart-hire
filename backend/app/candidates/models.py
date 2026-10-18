@@ -43,9 +43,7 @@ class Candidate(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     __table_args__ = (
-        CheckConstraint(
-            "years_experience >= 0", name="ck_candidates_years_experience_non_negative"
-        ),
+        CheckConstraint("years_experience >= 0", name="years_experience_non_negative"),
         Index("ix_candidates_skills", "skills", postgresql_using="gin"),
     )
 

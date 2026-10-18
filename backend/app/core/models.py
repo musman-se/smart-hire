@@ -3,13 +3,28 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, func
+from sqlalchemy import DateTime, MetaData, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+# Every constraint and index gets a predictable name. Without this, Postgres invents
+# names (jobs_pkey, candidates_email_key, applications_job_id_fkey) and a migration that
+# later needs to drop one has to guess what the server called it. Alembic's own docs
+# recommend setting this before the first migration; this project adopted it in
+# revision 7c1e5b2a9d40, which renames the constraints created before it.
+NAMING_CONVENTION = {
+    "pk": "pk_%(table_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "ix": "ix_%(column_0_label)s",
+}
 
 
 class Base(DeclarativeBase):
     """All models inherit from this. Alembic reads Base.metadata to diff the schema."""
+
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
 class UUIDPrimaryKeyMixin:
