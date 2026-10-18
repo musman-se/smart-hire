@@ -4,7 +4,6 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, DateTime, Enum, Index, Integer, String, Text
-from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.models import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -12,6 +11,7 @@ from app.jobs.enums import EmploymentType, JobStatus
 
 if TYPE_CHECKING:
     from app.applications.models import Application
+    from app.skills.models import Skill
 
 
 class Job(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -34,15 +34,6 @@ class Job(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         default=JobStatus.DRAFT,
     )
 
-    # Postgres array rather than a join table: skills are a flat list read as a whole and
-    # never referenced independently. A GIN index below keeps containment queries fast.
-    required_skills: Mapped[list[str]] = mapped_column(
-        ARRAY(String),
-        nullable=False,
-        default=list,
-        server_default="{}",
-    )
-
     min_experience_years: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
@@ -58,6 +49,18 @@ class Job(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         passive_deletes=True,
     )
 
+    # Required skills, through the job_skills join table (see app/skills/models.py).
+    # lazy="selectin" loads them for every job in a result with one extra
+    # `WHERE job_id IN (...)` query — never one query per job — and, because it happens
+    # during the original await, nothing tries to lazy-load later. Under async SQLAlchemy
+    # a lazy load outside an await raises rather than silently querying.
+    skill_set: Mapped[list["Skill"]] = relationship(
+        secondary="job_skills",
+        lazy="selectin",
+        order_by="Skill.name",
+        passive_deletes=True,
+    )
+
     __table_args__ = (
         # Named without the "ck_jobs_" prefix: the naming convention adds it.
         CheckConstraint("min_experience_years >= 0", name="min_experience_non_negative"),
@@ -68,8 +71,12 @@ class Job(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         # Recruiters browse by status constantly; this is the hottest filter in the API.
         Index("ix_jobs_status", "status"),
         Index("ix_jobs_title", "title"),
-        Index("ix_jobs_required_skills", "required_skills", postgresql_using="gin"),
     )
+
+    @property
+    def required_skills(self) -> list[str]:
+        """Skill names, which is what the API exposes — JobRead reads this attribute."""
+        return [skill.name for skill in self.skill_set]
 
     def __repr__(self) -> str:
         return f"<Job {self.id} {self.title!r} {self.status}>"

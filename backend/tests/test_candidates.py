@@ -20,7 +20,7 @@ async def test_register_candidate(client: AsyncClient) -> None:
     candidate = response.json()
     # Normalised on the way in, so uniqueness is effectively case-insensitive.
     assert candidate["email"] == "ayesha.khan@example.com"
-    assert candidate["skills"] == ["python", "kafka"]
+    assert candidate["skills"] == ["kafka", "python"]
 
 
 async def test_duplicate_email_is_rejected(client: AsyncClient) -> None:

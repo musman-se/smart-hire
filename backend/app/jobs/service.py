@@ -15,6 +15,8 @@ from app.jobs.enums import JobStatus
 from app.jobs.errors import JobNotFoundError, JobNotOpenError
 from app.jobs.models import Job
 from app.jobs.schemas import JobCreate, JobUpdate
+from app.skills.models import Skill
+from app.skills.service import resolve_skills
 
 
 async def get_job(session: AsyncSession, job_id: uuid.UUID) -> Job:
@@ -38,8 +40,9 @@ async def list_jobs(
     if status is not None:
         filters.append(Job.status == status)
     if skill:
-        # Array containment: "required_skills contains this skill". Uses the GIN index.
-        filters.append(Job.required_skills.contains([skill.strip().lower()]))
+        # EXISTS (SELECT 1 FROM job_skills JOIN skills ... WHERE skills.name = :skill).
+        # Served by the unique index on skills.name and the job_skills primary key.
+        filters.append(Job.skill_set.any(Skill.name == skill.strip().lower()))
     if search:
         filters.append(Job.title.ilike(f"%{search.strip()}%"))
 
@@ -55,7 +58,8 @@ async def list_jobs(
 
 async def create_job(session: AsyncSession, payload: JobCreate) -> Job:
     # Status is not taken from the payload: every job begins as a draft.
-    job = Job(**payload.model_dump(), status=JobStatus.DRAFT)
+    job = Job(**payload.model_dump(exclude={"required_skills"}), status=JobStatus.DRAFT)
+    job.skill_set = await resolve_skills(session, payload.required_skills)
     session.add(job)
     await session.commit()
     await session.refresh(job)
@@ -70,7 +74,10 @@ async def update_job(session: AsyncSession, job_id: uuid.UUID, payload: JobUpdat
 
     # exclude_unset is what makes this a PATCH: a field the client did not send is left
     # alone, rather than being overwritten with the schema default.
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    if "required_skills" in changes:
+        job.skill_set = await resolve_skills(session, changes.pop("required_skills") or [])
+    for field, value in changes.items():
         setattr(job, field, value)
 
     await session.commit()

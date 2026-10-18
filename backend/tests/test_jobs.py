@@ -22,8 +22,9 @@ async def test_create_job_starts_as_draft(client: AsyncClient) -> None:
     job = response.json()
     assert job["status"] == "draft"
     assert job["published_at"] is None
-    # Skills are trimmed, lowercased and de-duplicated by the schema validator.
-    assert job["required_skills"] == ["python", "fastapi"]
+    # Skills are trimmed, lowercased and de-duplicated by the schema validator, and
+    # come back in alphabetical order — the order the skill_set relationship loads in.
+    assert job["required_skills"] == ["fastapi", "python"]
 
 
 async def test_client_cannot_create_an_already_published_job(client: AsyncClient) -> None:

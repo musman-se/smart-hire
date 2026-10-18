@@ -80,7 +80,12 @@ async def clean_tables(engine) -> AsyncGenerator[None]:
     statement regardless of foreign keys.
     """
     async with engine.begin() as conn:
-        await conn.execute(text("TRUNCATE applications, candidates, jobs CASCADE"))
+        await conn.execute(
+            text(
+                "TRUNCATE applications, job_skills, candidate_skills, skills, "
+                "candidates, jobs CASCADE"
+            )
+        )
     yield
 
 

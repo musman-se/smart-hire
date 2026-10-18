@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.candidates.errors import CandidateNotFoundError, DuplicateEmailError
 from app.candidates.models import Candidate
 from app.candidates.schemas import CandidateCreate, CandidateUpdate
+from app.skills.models import Skill
+from app.skills.service import resolve_skills
 
 
 async def get_candidate(session: AsyncSession, candidate_id: uuid.UUID) -> Candidate:
@@ -29,7 +31,7 @@ async def list_candidates(
 ) -> tuple[list[Candidate], int]:
     filters = []
     if skill:
-        filters.append(Candidate.skills.contains([skill.strip().lower()]))
+        filters.append(Candidate.skill_set.any(Skill.name == skill.strip().lower()))
     if search:
         filters.append(Candidate.full_name.ilike(f"%{search.strip()}%"))
     if min_experience is not None:
@@ -48,7 +50,8 @@ async def list_candidates(
 
 
 async def create_candidate(session: AsyncSession, payload: CandidateCreate) -> Candidate:
-    candidate = Candidate(**payload.model_dump())
+    candidate = Candidate(**payload.model_dump(exclude={"skills"}))
+    candidate.skill_set = await resolve_skills(session, payload.skills)
     session.add(candidate)
 
     try:
@@ -70,7 +73,10 @@ async def update_candidate(
 ) -> Candidate:
     candidate = await get_candidate(session, candidate_id)
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    if "skills" in changes:
+        candidate.skill_set = await resolve_skills(session, changes.pop("skills") or [])
+    for field, value in changes.items():
         setattr(candidate, field, value)
 
     await session.commit()

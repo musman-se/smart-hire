@@ -16,5 +16,14 @@ from app.applications.models import Application
 from app.candidates.models import Candidate
 from app.core.models import Base
 from app.jobs.models import Job
+from app.skills.models import Skill, candidate_skills, job_skills
 
-__all__ = ["Application", "Base", "Candidate", "Job"]
+__all__ = [
+    "Application",
+    "Base",
+    "Candidate",
+    "Job",
+    "Skill",
+    "candidate_skills",
+    "job_skills",
+]
