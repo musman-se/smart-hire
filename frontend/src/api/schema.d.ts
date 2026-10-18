@@ -233,6 +233,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List known skills */
+        get: operations["list_skills_skills_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -493,6 +510,7 @@ export interface components {
          *
          *     `model_dump(exclude_unset=True)` in the service distinguishes "not sent" from
          *     "explicitly set to null" — a distinction a plain default of None would destroy.
+         *     Null is accepted only where the column allows it; see PatchModel.
          */
         JobUpdate: {
             /** Title */
@@ -552,6 +570,27 @@ export interface components {
             limit: number;
             /** Offset */
             offset: number;
+        };
+        /** Page[SkillRead] */
+        Page_SkillRead_: {
+            /** Items */
+            items: components["schemas"]["SkillRead"][];
+            /**
+             * Total
+             * @description Total rows matching the filter, ignoring pagination
+             */
+            total: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+        };
+        /** SkillRead */
+        SkillRead: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
         };
     };
     responses: never;
@@ -1982,6 +2021,78 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_skills_skills_get: {
+        parameters: {
+            query?: {
+                /** @description Prefix match, e.g. 'py' */
+                search?: string | null;
+                /** @description Rows per page */
+                limit?: number;
+                /** @description Rows to skip */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_SkillRead_"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Unprocessable Content */
             422: {
