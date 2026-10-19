@@ -31,6 +31,7 @@ class CandidateBase(InputModel):
         # Stored lowercase so uniqueness is case-insensitive in practice.
         return value.strip().lower()
 
+
 class CandidateCreate(CandidateBase):
     pass
 

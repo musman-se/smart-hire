@@ -61,9 +61,7 @@ class TemporalJobPublisher:
         try:
             await self._client.start_workflow(
                 PublishJobWorkflow.run,
-                PublishJobInput(
-                    job_id=str(job_id), max_attempts=settings.publishing_max_attempts
-                ),
+                PublishJobInput(job_id=str(job_id), max_attempts=settings.publishing_max_attempts),
                 id=workflow_id_for(job_id),
                 task_queue=settings.temporal_task_queue,
                 # A run already in flight is replaced: the newest request wins. Attaching

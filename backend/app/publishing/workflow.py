@@ -71,8 +71,15 @@ class PublishJobResult:
 # Exception types that mean "the database refused something". Their messages carry SQL
 # and constraint names: useful in the worker log and the Temporal UI, not to a recruiter.
 _DATABASE_ERRORS = frozenset(
-    {"IntegrityError", "DataError", "ProgrammingError", "OperationalError", "DBAPIError",
-     "InterfaceError", "InternalError"}
+    {
+        "IntegrityError",
+        "DataError",
+        "ProgrammingError",
+        "OperationalError",
+        "DBAPIError",
+        "InterfaceError",
+        "InternalError",
+    }
 )
 
 

@@ -59,9 +59,7 @@ class JobUpdate(PatchModel):
     )
 
     title: str | None = Field(default=None, min_length=3, max_length=200)
-    description: str | None = Field(
-        default=None, min_length=10, max_length=DESCRIPTION_MAX_LENGTH
-    )
+    description: str | None = Field(default=None, min_length=10, max_length=DESCRIPTION_MAX_LENGTH)
     department: str | None = Field(default=None, max_length=100)
     location: str | None = Field(default=None, max_length=120)
     employment_type: EmploymentType | None = None

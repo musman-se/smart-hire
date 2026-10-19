@@ -162,9 +162,7 @@ async def _apply(
 
     # A draft job is not visible to candidates; a closed one is no longer accepting.
     if job.status is not JobStatus.PUBLISHED:
-        raise JobNotOpenError(
-            f"Job {job.id} is {job.status} and is not accepting applications."
-        )
+        raise JobNotOpenError(f"Job {job.id} is {job.status} and is not accepting applications.")
 
     _check_eligibility(job, candidate)
 
@@ -218,9 +216,7 @@ async def _apply(
         # constraint caught what the pre-check could not.
         await session.rollback()
         logger.info("duplicate_application_race job=%s candidate=%s", job.id, candidate.id)
-        raise DuplicateApplicationError(
-            "This candidate has already applied to this job."
-        ) from exc
+        raise DuplicateApplicationError("This candidate has already applied to this job.") from exc
 
     logger.info(
         "application_created id=%s job=%s candidate=%s", application.id, job.id, candidate.id
