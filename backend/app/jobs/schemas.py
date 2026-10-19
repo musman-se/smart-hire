@@ -67,5 +67,11 @@ class JobRead(JobBase, ReadModel):
     id: uuid.UUID
     status: JobStatus
     published_at: datetime | None
+    publish_error: str | None = Field(
+        default=None, description="Why the last publish failed; cleared on success"
+    )
+    content_processed_at: datetime | None = Field(
+        default=None, description="When the publishing workflow last analysed the text"
+    )
     created_at: datetime
     updated_at: datetime

@@ -57,6 +57,10 @@ def do_run_migrations(connection: Connection) -> None:
         # Detect column type changes as well as added/removed columns.
         compare_type=True,
         compare_server_default=True,
+        # One transaction per revision rather than one for the whole upgrade. Postgres
+        # will not let a transaction use an enum value it added itself, so a revision
+        # that adds a value must commit before a later revision can rely on it.
+        transaction_per_migration=True,
     )
 
     with context.begin_transaction():

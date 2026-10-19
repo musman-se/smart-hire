@@ -64,6 +64,23 @@ class Settings(BaseSettings):
     # an idle one. -1 disables recycling.
     db_pool_recycle_seconds: int = -1
 
+    # --- Temporal (workflow orchestration) ------------------------------------------
+    # host:port of the Temporal server's gRPC frontend. Compose overrides it to
+    # temporal:7233 inside its network.
+    temporal_address: str = "localhost:7233"
+    # A namespace isolates workflows, like a database within a server.
+    temporal_namespace: str = "default"
+    # Workers poll a task queue by name; the API starts workflows on the same name. A
+    # mismatch is silent: workflows wait forever for a worker that never polls.
+    temporal_task_queue: str = "smarthire"
+
+    # --- Publishing workflow ---------------------------------------------------------
+    # Attempts per activity before a publish is given up and the job marked failed.
+    publishing_max_attempts: int = Field(default=5, ge=1, le=20)
+    # Fraction of activity attempts that fail on purpose, to demonstrate retries.
+    # Zero outside a demo.
+    publishing_fault_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+
     # --- Business rules ------------------------------------------------------------
     # How many applications a candidate may have open at once. Applications in a terminal
     # stage (hired, rejected) do not count, so a rejected candidate is not locked out.

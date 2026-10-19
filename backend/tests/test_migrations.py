@@ -146,3 +146,24 @@ def test_skills_data_migration_preserves_every_skill(alembic_config: Config) -> 
 
     assert _query("SELECT required_skills FROM jobs") == [(["kafka", "python"],)]
     assert _query("SELECT skills FROM candidates") == [(["go", "python"],)]
+
+
+def test_removing_job_statuses_moves_jobs_back_to_draft(alembic_config: Config) -> None:
+    """Postgres cannot drop an enum value, so a3d9e7c15b20's downgrade rebuilds the type.
+    A job sitting in a removed state must come out as DRAFT, not block the downgrade."""
+    command.upgrade(alembic_config, "a3d9e7c15b20")
+    _query(
+        """
+        INSERT INTO jobs (id, title, description, employment_type, status)
+        VALUES ('00000000-0000-0000-0000-000000000003', 'Mid-publish', 'Being processed.',
+                'FULL_TIME', 'PROCESSING')
+        """
+    )
+
+    command.downgrade(alembic_config, "e91a6c3f0b58")
+
+    assert _query("SELECT status::text FROM jobs") == [("DRAFT",)]
+    assert _query(
+        "SELECT enumlabel FROM pg_enum JOIN pg_type t ON t.oid = enumtypid "
+        "WHERE t.typname = 'job_status' ORDER BY enumsortorder"
+    ) == [("DRAFT",), ("PUBLISHED",), ("CLOSED",)]

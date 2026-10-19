@@ -24,6 +24,8 @@ from app.core.config import settings
 from app.core.db import get_session
 from app.main import app
 from app.models import Base
+from app.publishing.publisher import get_job_publisher
+from tests.fakes import InlineJobPublisher
 
 TEST_DB_NAME = settings.test_database_name
 
@@ -98,11 +100,18 @@ async def session(engine) -> AsyncGenerator[AsyncSession]:
 
 
 @pytest_asyncio.fixture
-async def client(engine) -> AsyncGenerator[AsyncClient]:
-    """An HTTP client bound to the app, with the database dependency redirected.
+async def publisher(engine) -> InlineJobPublisher:
+    """The publishing workflow, run inline. Tests may flip `publisher.available`."""
+    return InlineJobPublisher(async_sessionmaker(engine, expire_on_commit=False))
+
+
+@pytest_asyncio.fixture
+async def client(engine, publisher: InlineJobPublisher) -> AsyncGenerator[AsyncClient]:
+    """An HTTP client bound to the app, with its dependencies redirected.
 
     dependency_overrides is FastAPI's seam for exactly this: the app is untouched, but
-    every route that asks for a session gets one pointed at the test database.
+    every route that asks for a session gets one pointed at the test database, and every
+    route that starts a workflow gets the inline publisher.
     """
     factory = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -111,6 +120,7 @@ async def client(engine) -> AsyncGenerator[AsyncClient]:
             yield db_session
 
     app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_job_publisher] = lambda: publisher
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as async_client:
