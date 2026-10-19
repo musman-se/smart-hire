@@ -3,11 +3,13 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Request, status
+from fastapi.responses import JSONResponse
 
 from app.candidates import service as candidate_service
 from app.candidates.schemas import CandidateCreate, CandidateRead, CandidateUpdate
 from app.core.db import SessionDep
+from app.core.idempotency import IdempotencyDep, IdempotencyKey
 from app.core.pagination import Page, PaginationDep
 
 router = APIRouter()
@@ -38,9 +40,25 @@ async def list_candidates(
     status_code=status.HTTP_201_CREATED,
     summary="Register a candidate",
 )
-async def create_candidate(session: SessionDep, payload: CandidateCreate) -> CandidateRead:
-    candidate = await candidate_service.create_candidate(session, payload)
-    return CandidateRead.model_validate(candidate)
+async def create_candidate(
+    session: SessionDep,
+    idempotency: IdempotencyDep,
+    request: Request,
+    payload: CandidateCreate,
+    idempotency_key: IdempotencyKey = None,
+) -> JSONResponse:
+    async def create() -> CandidateRead:
+        return CandidateRead.model_validate(
+            await candidate_service.create_candidate(session, payload)
+        )
+
+    return await idempotency.run(
+        key=idempotency_key,
+        request=request,
+        body=payload,
+        status_code=status.HTTP_201_CREATED,
+        operation=create,
+    )
 
 
 @router.get("/{candidate_id}", response_model=CandidateRead, summary="Get one candidate")

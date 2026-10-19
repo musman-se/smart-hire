@@ -24,9 +24,12 @@ async def make_job(client: AsyncClient, *, publish: bool = True, **overrides: An
     job = response.json()
 
     if publish:
-        published = await client.post(f"/jobs/{job['id']}/publish")
-        assert published.status_code == 200, published.text
-        job = published.json()
+        # 202: the workflow is started, not finished. The inline publisher used in the
+        # tests finishes it before the response returns, so the job is published now.
+        accepted = await client.post(f"/jobs/{job['id']}/publish")
+        assert accepted.status_code == 202, accepted.text
+        job = (await client.get(f"/jobs/{job['id']}")).json()
+        assert job["status"] == "published", job
 
     return job
 

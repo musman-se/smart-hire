@@ -3,19 +3,28 @@
 Two endpoints, deliberately, because they answer different questions:
 
   /health        liveness  — is the process up? No dependencies checked.
-  /health/ready  readiness — can it actually serve traffic? Checks Postgres.
+  /health/ready  readiness — can it actually serve traffic? Checks Postgres, Temporal
+                 and Redis.
 
 Conflating them is a common mistake: a liveness probe that checks the database will
 report the API as dead during a brief database blip, and an orchestrator will then
 restart a perfectly healthy process.
+
+The dependencies are not equal. Without Postgres the API can serve nothing, so
+readiness fails (503). Without Temporal it still serves every read and every
+application; only publishing waits. Without Redis, idempotency keys stop replaying, and
+the database constraints still refuse duplicates. So either of those reports "degraded"
+with a 200 — taking the whole API out of rotation for it would turn a partial outage
+into a full one.
 """
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.db import SessionDep
+from app.core.redis import redis_is_reachable
+from app.core.temporal import temporal_is_reachable
 
 router = APIRouter(tags=["health"])
 
@@ -29,7 +38,10 @@ async def liveness() -> dict[str, str]:
 async def readiness(session: SessionDep) -> JSONResponse:
     try:
         await session.execute(text("SELECT 1"))
-    except (SQLAlchemyError, OSError) as exc:
+    except Exception as exc:  # noqa: BLE001 - any failure to answer is "not ready"
+        # Broad on purpose. A refused login, "the database system is starting up", a
+        # timeout: each surfaces as a different exception class, and every one of them
+        # must read as 503 to an orchestrator — never as a 500 from the probe itself.
         return JSONResponse(
             status_code=503,
             content={
@@ -39,7 +51,14 @@ async def readiness(session: SessionDep) -> JSONResponse:
             },
         )
 
+    temporal_ok = await temporal_is_reachable()
+    redis_ok = await redis_is_reachable()
     return JSONResponse(
         status_code=200,
-        content={"status": "ok", "database": "reachable"},
+        content={
+            "status": "ok" if temporal_ok and redis_ok else "degraded",
+            "database": "reachable",
+            "temporal": "reachable" if temporal_ok else "unreachable",
+            "redis": "reachable" if redis_ok else "unreachable",
+        },
     )

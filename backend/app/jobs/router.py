@@ -7,13 +7,17 @@ about what is allowed lives in app.jobs.service.
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Request, status
+from fastapi.responses import JSONResponse
 
 from app.core.db import SessionDep
+from app.core.idempotency import IdempotencyDep, IdempotencyKey
 from app.core.pagination import Page, PaginationDep
 from app.jobs import service as job_service
 from app.jobs.enums import JobStatus
 from app.jobs.schemas import JobCreate, JobRead, JobUpdate
+from app.publishing import service as publishing_service
+from app.publishing.publisher import JobPublisherDep
 
 router = APIRouter()
 
@@ -40,9 +44,25 @@ async def list_jobs(
 @router.post(
     "", response_model=JobRead, status_code=status.HTTP_201_CREATED, summary="Create a job"
 )
-async def create_job(session: SessionDep, payload: JobCreate) -> JobRead:
-    job = await job_service.create_job(session, payload)
-    return JobRead.model_validate(job)
+async def create_job(
+    session: SessionDep,
+    idempotency: IdempotencyDep,
+    request: Request,
+    payload: JobCreate,
+    idempotency_key: IdempotencyKey = None,
+) -> JSONResponse:
+    # A job has no natural unique key, so without an Idempotency-Key a retried POST
+    # creates a second, identical job.
+    async def create() -> JobRead:
+        return JobRead.model_validate(await job_service.create_job(session, payload))
+
+    return await idempotency.run(
+        key=idempotency_key,
+        request=request,
+        body=payload,
+        status_code=status.HTTP_201_CREATED,
+        operation=create,
+    )
 
 
 @router.get("/{job_id}", response_model=JobRead, summary="Get one job")
@@ -52,8 +72,17 @@ async def get_job(session: SessionDep, job_id: uuid.UUID) -> JobRead:
 
 
 @router.patch("/{job_id}", response_model=JobRead, summary="Update a job")
-async def update_job(session: SessionDep, job_id: uuid.UUID, payload: JobUpdate) -> JobRead:
+async def update_job(
+    session: SessionDep, publisher: JobPublisherDep, job_id: uuid.UUID, payload: JobUpdate
+) -> JobRead:
     job = await job_service.update_job(session, job_id, payload)
+    # "When a recruiter publishes or updates a job", the brief says, the content
+    # pipeline runs. A published job whose text changed is re-analysed in the
+    # background; it stays published throughout.
+    if job.status is JobStatus.PUBLISHED and payload.model_fields_set & (
+        publishing_service.CONTENT_FIELDS
+    ):
+        await publishing_service.refresh_content(publisher, job)
     return JobRead.model_validate(job)
 
 
@@ -63,14 +92,9 @@ async def delete_job(session: SessionDep, job_id: uuid.UUID) -> None:
 
 
 # --- Lifecycle transitions -------------------------------------------------------
-# Modelled as named actions rather than PATCH status="published". A transition has rules
-# and side effects; a field edit implies neither.
-
-
-@router.post("/{job_id}/publish", response_model=JobRead, summary="Publish a job")
-async def publish_job(session: SessionDep, job_id: uuid.UUID) -> JobRead:
-    job = await job_service.publish_job(session, job_id)
-    return JobRead.model_validate(job)
+# Modelled as named actions rather than PATCH status="closed". A transition has rules
+# and side effects; a field edit implies neither. Publishing — the transition with the
+# most side effects — lives in app/publishing/router.py.
 
 
 @router.post("/{job_id}/close", response_model=JobRead, summary="Close a job")

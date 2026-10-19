@@ -83,10 +83,32 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+/**
+ * A fresh Idempotency-Key. Create one per *intended action* and resend the same one if
+ * that action is retried; the backend then replays its first answer instead of acting
+ * twice. See backend/app/core/idempotency.py.
+ */
+export function newIdempotencyKey(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+
+  // randomUUID exists only in secure contexts — HTTPS, or localhost. Opened over plain
+  // HTTP from another machine (http://192.168.x.x:3000, say) it is undefined, and the
+  // console would crash. getRandomValues works everywhere: build a version-4 UUID.
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40; // version 4
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80; // RFC 4122 variant
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
+  post: <T>(path: string, body?: unknown, options?: { idempotencyKey?: string }) =>
+    request<T>(path, {
+      method: "POST",
+      body: body ? JSON.stringify(body) : undefined,
+      headers: options?.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {},
+    }),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),

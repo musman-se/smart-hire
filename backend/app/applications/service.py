@@ -30,11 +30,12 @@ from app.applications.errors import (
     JobCapacityReachedError,
     NotEligibleError,
 )
-from app.applications.models import Application
+from app.applications.models import Application, ApplicationStageChange
 from app.applications.schemas import ApplicationCreate
 from app.candidates.models import Candidate
 from app.candidates.service import get_candidate
 from app.core.config import settings
+from app.core.errors import DomainError
 from app.jobs.enums import JobStatus
 from app.jobs.errors import JobNotOpenError
 from app.jobs.models import Job
@@ -44,13 +45,18 @@ logger = logging.getLogger(__name__)
 
 # Which stages may follow which. Encoding this as data rather than a chain of ifs makes
 # the hiring pipeline readable at a glance — and reviewable by someone non-technical.
+#
+# REJECTED (the recruiter's decision) and WITHDRAWN (the candidate's) are reachable from
+# every active stage; nothing leaves a terminal stage.
+_REJECT_OR_WITHDRAW = {ApplicationStage.REJECTED, ApplicationStage.WITHDRAWN}
 ALLOWED_TRANSITIONS: dict[ApplicationStage, set[ApplicationStage]] = {
-    ApplicationStage.APPLIED: {ApplicationStage.SCREENING, ApplicationStage.REJECTED},
-    ApplicationStage.SCREENING: {ApplicationStage.INTERVIEW, ApplicationStage.REJECTED},
-    ApplicationStage.INTERVIEW: {ApplicationStage.OFFER, ApplicationStage.REJECTED},
-    ApplicationStage.OFFER: {ApplicationStage.HIRED, ApplicationStage.REJECTED},
+    ApplicationStage.APPLIED: {ApplicationStage.SCREENING} | _REJECT_OR_WITHDRAW,
+    ApplicationStage.SCREENING: {ApplicationStage.INTERVIEW} | _REJECT_OR_WITHDRAW,
+    ApplicationStage.INTERVIEW: {ApplicationStage.OFFER} | _REJECT_OR_WITHDRAW,
+    ApplicationStage.OFFER: {ApplicationStage.HIRED} | _REJECT_OR_WITHDRAW,
     ApplicationStage.HIRED: set(),
     ApplicationStage.REJECTED: set(),
+    ApplicationStage.WITHDRAWN: set(),
 }
 
 
@@ -119,6 +125,20 @@ async def _count_job_applications(session: AsyncSession, job_id: uuid.UUID) -> i
 async def apply_to_job(
     session: AsyncSession, job_id: uuid.UUID, payload: ApplicationCreate
 ) -> Application:
+    try:
+        return await _apply(session, job_id, payload)
+    except DomainError:
+        # A refusal ends the transaction at once. Otherwise the job and candidate row
+        # locks taken below would be held while the caller stores the refusal (the
+        # idempotency record, in Redis) and the request winds down — serialising every
+        # other application to this job behind a network call.
+        await session.rollback()
+        raise
+
+
+async def _apply(
+    session: AsyncSession, job_id: uuid.UUID, payload: ApplicationCreate
+) -> Application:
     # Lock the job row, then the candidate row, until this transaction commits.
     #
     # Rule 3 counts applications and then inserts one. Without the locks, five requests
@@ -142,9 +162,7 @@ async def apply_to_job(
 
     # A draft job is not visible to candidates; a closed one is no longer accepting.
     if job.status is not JobStatus.PUBLISHED:
-        raise JobNotOpenError(
-            f"Job {job.id} is {job.status} and is not accepting applications."
-        )
+        raise JobNotOpenError(f"Job {job.id} is {job.status} and is not accepting applications.")
 
     _check_eligibility(job, candidate)
 
@@ -174,13 +192,21 @@ async def apply_to_job(
     if existing is not None:
         raise DuplicateApplicationError("This candidate has already applied to this job.")
 
+    # The id is set here rather than left to the INSERT, so the first history entry
+    # can reference it in the same transaction.
     application = Application(
+        id=uuid.uuid4(),
         job_id=job.id,
         candidate_id=candidate.id,
         cover_letter=payload.cover_letter,
         stage=ApplicationStage.APPLIED,
     )
     session.add(application)
+    session.add(
+        ApplicationStageChange(
+            application_id=application.id, from_stage=None, to_stage=ApplicationStage.APPLIED
+        )
+    )
 
     try:
         await session.commit()
@@ -190,9 +216,7 @@ async def apply_to_job(
         # constraint caught what the pre-check could not.
         await session.rollback()
         logger.info("duplicate_application_race job=%s candidate=%s", job.id, candidate.id)
-        raise DuplicateApplicationError(
-            "This candidate has already applied to this job."
-        ) from exc
+        raise DuplicateApplicationError("This candidate has already applied to this job.") from exc
 
     logger.info(
         "application_created id=%s job=%s candidate=%s", application.id, job.id, candidate.id
@@ -230,7 +254,10 @@ async def list_applications(
 
 
 async def advance_stage(
-    session: AsyncSession, application_id: uuid.UUID, target: ApplicationStage
+    session: AsyncSession,
+    application_id: uuid.UUID,
+    target: ApplicationStage,
+    note: str | None = None,
 ) -> Application:
     """Move an application through the pipeline, refusing illegal jumps.
 
@@ -254,12 +281,36 @@ async def advance_stage(
         )
 
     application.stage = target
+    session.add(
+        ApplicationStageChange(
+            application_id=application.id, from_stage=current, to_stage=target, note=note
+        )
+    )
     await session.commit()
     logger.info("application_stage_changed id=%s from=%s to=%s", application.id, current, target)
     return application
 
 
-async def withdraw_application(session: AsyncSession, application_id: uuid.UUID) -> None:
+async def withdraw_application(session: AsyncSession, application_id: uuid.UUID) -> Application:
+    """The candidate pulls out. A stage change, not a delete: the application and its
+    history stay, its slot under the candidate's limit is freed, and it cannot be
+    withdrawn once hired or rejected. Withdrawing twice is a no-op.
+
+    The (job, candidate) pair stays taken, so a withdrawn application cannot be
+    re-submitted to the same job — withdrawal is final for that job.
+    """
+    return await advance_stage(
+        session, application_id, ApplicationStage.WITHDRAWN, note="Withdrawn by the candidate"
+    )
+
+
+async def get_history(
+    session: AsyncSession, application_id: uuid.UUID
+) -> list[ApplicationStageChange]:
     application = await get_application(session, application_id)
-    await session.delete(application)
-    await session.commit()
+    rows = await session.scalars(
+        select(ApplicationStageChange)
+        .where(ApplicationStageChange.application_id == application.id)
+        .order_by(ApplicationStageChange.changed_at, ApplicationStageChange.id)
+    )
+    return list(rows)

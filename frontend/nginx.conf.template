@@ -13,8 +13,18 @@ server {
     # The API is proxied under the same origin as the app. That is why the project needs
     # no CORS configuration at all — the browser never makes a cross-origin request, so
     # there is nothing to preflight.
+    # Re-resolve the API's address every 10 seconds through Docker's embedded DNS.
+    # With a literal hostname, nginx resolves it once at startup and caches the IP for
+    # its whole lifetime; when the api container is recreated it gets a new IP, and
+    # every request then fails with 502 until nginx itself is restarted. A variable in
+    # proxy_pass forces resolution at request time, through this resolver.
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
     location /api/ {
-        proxy_pass ${API_UPSTREAM}/;
+        set $api_upstream ${API_UPSTREAM};
+        # With a variable, proxy_pass no longer strips the /api prefix itself.
+        rewrite ^/api/(.*)$ /$1 break;
+        proxy_pass $api_upstream;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

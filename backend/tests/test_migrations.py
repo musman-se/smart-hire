@@ -146,3 +146,71 @@ def test_skills_data_migration_preserves_every_skill(alembic_config: Config) -> 
 
     assert _query("SELECT required_skills FROM jobs") == [(["kafka", "python"],)]
     assert _query("SELECT skills FROM candidates") == [(["go", "python"],)]
+
+
+def test_removing_job_statuses_moves_jobs_back_to_draft(alembic_config: Config) -> None:
+    """Postgres cannot drop an enum value, so a3d9e7c15b20's downgrade rebuilds the type.
+    A job sitting in a removed state must come out as DRAFT, not block the downgrade."""
+    command.upgrade(alembic_config, "a3d9e7c15b20")
+    _query(
+        """
+        INSERT INTO jobs (id, title, description, employment_type, status)
+        VALUES ('00000000-0000-0000-0000-000000000003', 'Mid-publish', 'Being processed.',
+                'FULL_TIME', 'PROCESSING')
+        """
+    )
+
+    command.downgrade(alembic_config, "e91a6c3f0b58")
+
+    assert _query("SELECT status::text FROM jobs") == [("DRAFT",)]
+    assert _query(
+        "SELECT enumlabel FROM pg_enum JOIN pg_type t ON t.oid = enumtypid "
+        "WHERE t.typname = 'job_status' ORDER BY enumsortorder"
+    ) == [("DRAFT",), ("PUBLISHED",), ("CLOSED",)]
+
+
+def test_stage_history_is_backfilled_for_existing_applications(alembic_config: Config) -> None:
+    """f2c7a91d4e65 gives every pre-existing application one honest history row."""
+    command.upgrade(alembic_config, "c8b41f6e2d93")
+    _query(
+        """
+        INSERT INTO jobs (id, title, description, employment_type, status)
+        VALUES ('00000000-0000-0000-0000-000000000004', 'Role', 'A job.', 'FULL_TIME', 'PUBLISHED')
+        """
+    )
+    _query(
+        """
+        INSERT INTO candidates (id, email, full_name)
+        VALUES ('00000000-0000-0000-0000-000000000005', 'h@example.com', 'Hist Person')
+        """
+    )
+    _query(
+        """
+        INSERT INTO applications (id, job_id, candidate_id, stage)
+        VALUES ('00000000-0000-0000-0000-000000000006', '00000000-0000-0000-0000-000000000004',
+                '00000000-0000-0000-0000-000000000005', 'INTERVIEW')
+        """
+    )
+
+    command.upgrade(alembic_config, "f2c7a91d4e65")
+
+    rows = _query("SELECT from_stage::text, to_stage::text FROM application_stage_changes")
+    assert rows == [(None, "INTERVIEW")]
+
+
+def test_a_long_legacy_skill_name_does_not_stop_the_upgrade(alembic_config: Config) -> None:
+    """Cutting a name to 64 characters can leave a trailing space, which the
+    ck_skills_name_normalised check refuses. b4f2d8e61a37 trims after it cuts."""
+    command.upgrade(alembic_config, "7c1e5b2a9d40")
+    long_name = "a" * 63 + " tail of a very long legacy skill"
+    _query(
+        f"""
+        INSERT INTO candidates (id, email, full_name, skills)
+        VALUES ('00000000-0000-0000-0000-000000000007', 'long@example.com', 'Long Name',
+                ARRAY['{long_name}'])
+        """
+    )
+
+    command.upgrade(alembic_config, "b4f2d8e61a37")
+
+    assert _query("SELECT name FROM skills") == [("a" * 63,)]

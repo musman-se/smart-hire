@@ -31,8 +31,18 @@ flowchart LR
     r2["7c1e5b2a9d40<br/>naming convention"]
     r3["b4f2d8e61a37<br/>normalise skills"]
     r4["e91a6c3f0b58<br/>rework indexes"]
-    base --> r1 --> r2 --> r3 --> r4
+    r5["a3d9e7c15b20<br/>publishing lifecycle"]
+    r6["c8b41f6e2d93<br/>job content tables"]
+    r7["f2c7a91d4e65<br/>stage history"]
+    r8["b7e3d05a9c12<br/>notifications"]
+    base --> r1 --> r2 --> r3 --> r4 --> r5 --> r6 --> r7 --> r8
 ```
+
+Revisions 1–4 came with the Module 1 review; 5–8 with Module 2. Two of the Module 2
+revisions show patterns worth knowing: `a3d9e7c15b20` *adds enum values*, and since
+Postgres cannot remove one its downgrade rebuilds the type; `f2c7a91d4e65` *backfills*
+one honest history row per existing application, and says so in its downgrade, which is
+lossy by necessity.
 
 The **order comes from that chain, never from file names.** File names are
 date-prefixed only so the folder reads chronologically.
@@ -42,7 +52,7 @@ date-prefixed only so the folder reads chronologically.
 The database records its own version in a one-row table:
 
 ```sql
-SELECT * FROM alembic_version;   -- e91a6c3f0b58
+SELECT * FROM alembic_version;   -- b7e3d05a9c12
 ```
 
 `alembic upgrade head` reads that row, walks the chain from there to the newest revision

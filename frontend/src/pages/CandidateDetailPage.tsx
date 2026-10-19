@@ -1,9 +1,8 @@
 import { Link, useParams } from "react-router-dom";
 
+import { TERMINAL_STAGES } from "../api/types";
 import { Empty, ErrorNotice, StagePill, Tags, formatDate } from "../components/ui";
 import { useCandidate, useCandidateApplications } from "../hooks/queries";
-
-const TERMINAL_STAGES = new Set(["hired", "rejected"]);
 
 export function CandidateDetailPage() {
   const { candidateId = "" } = useParams();
@@ -14,8 +13,8 @@ export function CandidateDetailPage() {
   if (error) return <ErrorNotice error={error} />;
   if (!candidate) return <Empty>Candidate not found.</Empty>;
 
-  // Mirrors the backend's limit rule: terminal stages free up a slot, so a rejected
-  // candidate is never locked out of applying elsewhere.
+  // Mirrors the backend's limit rule: terminal stages (hired, rejected, withdrawn) free
+  // up a slot, so a rejected candidate is never locked out of applying elsewhere.
   const active = (applications?.items ?? []).filter((a) => !TERMINAL_STAGES.has(a.stage)).length;
 
   return (

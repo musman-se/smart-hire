@@ -16,12 +16,20 @@ erDiagram
     CANDIDATES ||--o{ CANDIDATE_SKILLS : has
     SKILLS ||--o{ JOB_SKILLS : "listed in"
     SKILLS ||--o{ CANDIDATE_SKILLS : "listed in"
+    JOBS ||--o{ JOB_SECTIONS : "broken into"
+    JOBS ||--o{ JOB_KEYWORDS : "characterised by"
+    JOBS ||--o{ JOB_EXTRACTED_SKILLS : mentions
+    SKILLS ||--o{ JOB_EXTRACTED_SKILLS : "found in"
+    APPLICATIONS ||--o{ APPLICATION_STAGE_CHANGES : "history of"
+    APPLICATIONS ||--o{ NOTIFICATIONS : "messages about"
 
     JOBS {
         uuid id PK
         string title "trigram indexed"
         text description
-        enum status "draft | published | closed"
+        enum status "draft | processing | published | publish_failed | closed"
+        text publish_error "why the last publish failed"
+        timestamptz content_processed_at
         enum employment_type
         int min_experience_years
         int max_applications "nullable = uncapped"
@@ -51,11 +59,47 @@ erDiagram
         uuid id PK
         uuid job_id FK
         uuid candidate_id FK
-        enum stage
+        enum stage "... | hired | rejected | withdrawn"
         text cover_letter
-        float match_score
+        float match_score "set by ProcessApplication"
+    }
+    JOB_SECTIONS {
+        bigint id PK
+        uuid job_id FK
+        enum kind "summary | responsibility | requirement | benefit"
+        smallint position
+        text content
+    }
+    JOB_KEYWORDS {
+        uuid job_id PK, FK
+        string keyword PK
+        float score "0 < score <= 1"
+    }
+    JOB_EXTRACTED_SKILLS {
+        uuid job_id PK, FK
+        int skill_id PK, FK
+        int mentions
+    }
+    APPLICATION_STAGE_CHANGES {
+        bigint id PK
+        uuid application_id FK
+        enum from_stage "null for the first"
+        enum to_stage
+        text note
+        timestamptz changed_at
+    }
+    NOTIFICATIONS {
+        bigint id PK
+        string dedupe_key UK "one message, once"
+        string recipient
+        string subject
+        uuid application_id FK
     }
 ```
+
+The Module 2 tables are explained where they are used: the job content tables in
+[WORKFLOWS.md §3](WORKFLOWS.md#3-publishjob), the stage history and notifications in
+[WORKFLOWS.md §4](WORKFLOWS.md#4-processapplication).
 
 ## 2. Normalisation
 

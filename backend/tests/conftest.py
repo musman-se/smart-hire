@@ -1,7 +1,7 @@
 """Test fixtures.
 
 These tests run against a real PostgreSQL instance, in a separate `smarthire_test`
-database that is created on demand and dropped at the end.
+database that is created on demand; its tables are dropped at the end.
 
 Using the real database rather than SQLite is deliberate. The rules this suite exists to
 prove — the unique constraint on (job_id, candidate_id), array containment, native enum
@@ -12,18 +12,26 @@ If Postgres is not reachable, every database test skips with a clear message rat
 failing noisily.
 """
 
+import asyncio
 from collections.abc import AsyncGenerator
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from temporalio.client import Client
 
+from app.applications.processor import get_application_processor
 from app.core.config import settings
 from app.core.db import get_session
+from app.core.idempotency import IdempotencyStore, get_idempotency_store
 from app.main import app
 from app.models import Base
+from app.publishing.publisher import get_job_publisher
+from tests.fakes import InlineApplicationProcessor, InlineJobPublisher
 
 TEST_DB_NAME = settings.test_database_name
 
@@ -98,11 +106,69 @@ async def session(engine) -> AsyncGenerator[AsyncSession]:
 
 
 @pytest_asyncio.fixture
-async def client(engine) -> AsyncGenerator[AsyncClient]:
-    """An HTTP client bound to the app, with the database dependency redirected.
+async def publisher(engine) -> InlineJobPublisher:
+    """The publishing workflow, run inline. Tests may flip `publisher.available`."""
+    return InlineJobPublisher(async_sessionmaker(engine, expire_on_commit=False))
+
+
+@pytest_asyncio.fixture
+async def processor(engine) -> InlineApplicationProcessor:
+    """Application processing (scoring, confirmation), run inline."""
+    return InlineApplicationProcessor(async_sessionmaker(engine, expire_on_commit=False))
+
+
+@pytest_asyncio.fixture
+async def temporal() -> Client:
+    """A client for the Compose Temporal server; the test skips if it is unreachable."""
+    try:
+        client = await asyncio.wait_for(
+            Client.connect(settings.temporal_address, namespace=settings.temporal_namespace),
+            timeout=5,
+        )
+        await asyncio.wait_for(client.service_client.check_health(), timeout=5)
+    except Exception as exc:  # noqa: BLE001 - any failure means "no server to test against"
+        pytest.skip(
+            f"Temporal unreachable ({type(exc).__name__}). Run: docker compose up -d temporal"
+        )
+    return client
+
+
+@pytest_asyncio.fixture
+async def test_redis() -> AsyncGenerator[Redis]:
+    """Redis logical database 15 — never the app's — emptied before each test.
+
+    Not skipped when Redis is down: the idempotency store fails open, so most tests run
+    regardless. Tests that need Redis ask for `redis_available` too.
+    """
+    redis = Redis.from_url(settings.test_redis_url, decode_responses=True, socket_timeout=1)
+    try:
+        await redis.flushdb()
+    except (RedisError, OSError):
+        pass
+    yield redis
+    await redis.aclose()
+
+
+@pytest_asyncio.fixture
+async def redis_available(test_redis: Redis) -> None:
+    try:
+        await test_redis.ping()
+    except (RedisError, OSError) as exc:
+        pytest.skip(f"Redis unreachable ({type(exc).__name__}). Run: docker compose up -d redis")
+
+
+@pytest_asyncio.fixture
+async def client(
+    engine,
+    publisher: InlineJobPublisher,
+    processor: InlineApplicationProcessor,
+    test_redis: Redis,
+) -> AsyncGenerator[AsyncClient]:
+    """An HTTP client bound to the app, with its dependencies redirected.
 
     dependency_overrides is FastAPI's seam for exactly this: the app is untouched, but
-    every route that asks for a session gets one pointed at the test database.
+    every route that asks for a session gets one pointed at the test database, and every
+    route that starts a workflow gets the inline publisher.
     """
     factory = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -111,6 +177,11 @@ async def client(engine) -> AsyncGenerator[AsyncClient]:
             yield db_session
 
     app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_job_publisher] = lambda: publisher
+    app.dependency_overrides[get_application_processor] = lambda: processor
+    app.dependency_overrides[get_idempotency_store] = lambda: IdempotencyStore(
+        test_redis, ttl_seconds=3600, lock_seconds=60
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as async_client:
