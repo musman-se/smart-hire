@@ -354,9 +354,176 @@ td.actions {
 }
 .pill-screening,
 .pill-interview,
-.pill-offer {
+.pill-offer,
+.pill-processing,
+.pill-wf-running {
   background: var(--warn-soft);
   color: var(--warn);
+}
+.pill-processing,
+.pill-wf-running {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.pill-publish_failed,
+.pill-wf-failed,
+.pill-wf-terminated,
+.pill-wf-timed_out {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.pill-wf-completed {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.pill-withdrawn,
+.pill-wf-canceled {
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border-color: var(--border);
+  text-decoration: line-through;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* ---------- Module 2: publishing, content, scores, history ---------- */
+
+.mini-head {
+  margin: 0.6rem 0 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.steps {
+  list-style: none;
+  margin: 0 0 0.8rem;
+  padding: 0;
+  counter-reset: step;
+}
+.steps li {
+  counter-increment: step;
+  padding: 0.35rem 0 0.35rem 2rem;
+  position: relative;
+  color: var(--text-dim);
+  font-size: 0.87rem;
+}
+.steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 0.3rem;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  font-size: 0.72rem;
+}
+.steps li.done {
+  color: var(--accent);
+}
+.steps li.done::before {
+  content: "✓";
+  border-color: var(--accent);
+}
+.steps li.current {
+  color: var(--warn);
+  font-weight: 600;
+}
+.steps li.current::before {
+  border-color: var(--warn);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.content-section ul {
+  margin: 0 0 0.4rem;
+  padding-left: 1.1rem;
+  font-size: 0.87rem;
+}
+.content-section li {
+  margin: 0.15rem 0;
+}
+.keywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.keyword {
+  position: relative;
+  /* Its own stacking context, so the z-index: -1 bar paints behind the text but in
+     front of the panel — without it the bar would sit behind the panel, invisible. */
+  isolation: isolate;
+  overflow: hidden;
+  padding: 0.12rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+.keyword-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent-soft);
+  z-index: -1;
+}
+.score {
+  display: inline-block;
+  min-width: 2.6rem;
+  text-align: center;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.score-high {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.score-mid {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.score-low {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.row-detail td {
+  background: var(--surface-2);
+}
+.timeline-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.82rem;
+}
+.timeline li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.35rem 0 0.35rem 0.75rem;
+  border-left: 2px solid var(--border);
+}
+.timeline-when {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+.timeline-note {
+  color: var(--text-dim);
+  font-style: italic;
+}
+.health .dot.degraded {
+  background: var(--warn);
 }
 
 .tag {

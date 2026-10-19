@@ -6,21 +6,28 @@ import { useReadiness } from "../hooks/queries";
  * Surfaces /health/ready in the header.
  *
  * Readiness rather than liveness: the question a user cares about is "can this thing
- * serve me", and that includes the database. It polls every 15 seconds.
+ * serve me", and that includes its dependencies. Degraded — Temporal or Redis down —
+ * is shown apart from down: reads and applications still work, publishing waits.
+ * It polls every 15 seconds.
  */
 function HealthBadge() {
   const { data, isError, isLoading } = useReadiness();
 
-  const state = isLoading ? "…" : isError ? "down" : "up";
+  const unreachable = data
+    ? (["temporal", "redis"] as const).filter((name) => data[name] === "unreachable")
+    : [];
+  const state = isLoading ? "" : isError ? "down" : unreachable.length > 0 ? "degraded" : "up";
   const label = isLoading
     ? "checking"
     : isError
       ? "API unreachable"
-      : `API ready · db ${data?.database ?? "ok"}`;
+      : unreachable.length > 0
+        ? `API degraded · ${unreachable.join(", ")} down`
+        : "API ready · db · temporal · redis";
 
   return (
     <span className="health" title="GET /health/ready">
-      <span className={`dot ${state === "up" ? "up" : state === "down" ? "down" : ""}`} />
+      <span className={`dot ${state}`} />
       {label}
     </span>
   );
