@@ -29,7 +29,9 @@ async def test_apply_creates_an_application_in_the_applied_stage(client: AsyncCl
     assert application["stage"] == "applied"
     assert application["job_id"] == job["id"]
     assert application["candidate_id"] == candidate["id"]
-    assert application["match_score"] is None  # scored by a worker in a later module
+    # Scoring runs after the 201, in the ProcessApplication workflow, so the response
+    # itself never carries a score.
+    assert application["match_score"] is None
 
 
 # --- Rule 1: duplicate applications ----------------------------------------------
@@ -326,3 +328,87 @@ async def test_candidate_limit_holds_under_concurrent_applications(
     assert sorted(r.status_code for r in responses) == [201, 409, 409, 409]
     listed = await client.get("/applications", params={"candidate_id": candidate["id"]})
     assert listed.json()["total"] == 2
+
+
+# --- Tracking ----------------------------------------------------------------------
+
+
+async def test_every_stage_change_is_recorded_in_order(client: AsyncClient) -> None:
+    job = await make_job(client)
+    candidate = await make_candidate(client)
+    application = (await apply(client, job, candidate)).json()
+
+    await client.post(
+        f"/applications/{application['id']}/stage",
+        json={"stage": "screening", "note": "Strong CV"},
+    )
+    await client.post(f"/applications/{application['id']}/stage", json={"stage": "interview"})
+
+    history = (await client.get(f"/applications/{application['id']}/history")).json()
+
+    assert [(h["from_stage"], h["to_stage"]) for h in history] == [
+        (None, "applied"),
+        ("applied", "screening"),
+        ("screening", "interview"),
+    ]
+    assert history[1]["note"] == "Strong CV"
+
+
+async def test_a_refused_transition_leaves_no_history(client: AsyncClient) -> None:
+    job = await make_job(client)
+    candidate = await make_candidate(client)
+    application = (await apply(client, job, candidate)).json()
+
+    refused = await client.post(f"/applications/{application['id']}/stage", json={"stage": "hired"})
+
+    assert refused.status_code == 409
+    history = (await client.get(f"/applications/{application['id']}/history")).json()
+    assert len(history) == 1
+
+
+async def test_withdrawing_keeps_the_application_and_its_history(client: AsyncClient) -> None:
+    job = await make_job(client)
+    candidate = await make_candidate(client)
+    application = (await apply(client, job, candidate)).json()
+
+    response = await client.delete(f"/applications/{application['id']}")
+
+    assert response.status_code == 204
+    kept = await client.get(f"/applications/{application['id']}")
+    assert kept.status_code == 200
+    assert kept.json()["stage"] == "withdrawn"
+    history = (await client.get(f"/applications/{application['id']}/history")).json()
+    assert history[-1]["to_stage"] == "withdrawn"
+    assert history[-1]["note"] == "Withdrawn by the candidate"
+
+
+async def test_withdrawing_frees_a_slot_but_not_the_same_job(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "max_applications_per_candidate", 1)
+    candidate = await make_candidate(client)
+    first = await make_job(client, title="First", min_experience_years=0)
+    second = await make_job(client, title="Second", min_experience_years=0)
+    application = (await apply(client, first, candidate)).json()
+
+    await client.delete(f"/applications/{application['id']}")
+
+    again = await apply(client, first, candidate)
+    assert again.status_code == 409  # withdrawal is final for that job
+    assert again.json()["error"]["code"] == "duplicate_application"
+    assert (await apply(client, second, candidate)).status_code == 201  # but the slot is free
+
+
+async def test_a_hired_application_cannot_be_withdrawn(client: AsyncClient) -> None:
+    job = await make_job(client)
+    candidate = await make_candidate(client)
+    application = (await apply(client, job, candidate)).json()
+    for stage in ("screening", "interview", "offer", "hired"):
+        await client.post(f"/applications/{application['id']}/stage", json={"stage": stage})
+
+    response = await client.delete(f"/applications/{application['id']}")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "invalid_stage_transition"

@@ -48,8 +48,9 @@ async def test_publish_sets_status_and_timestamp(client: AsyncClient) -> None:
 
     response = await client.post(f"/jobs/{job['id']}/publish")
 
-    assert response.status_code == 200
-    published = response.json()
+    assert response.status_code == 202
+    assert response.json()["status"] == "processing"  # accepted, not yet done
+    published = (await client.get(f"/jobs/{job['id']}")).json()
     assert published["status"] == "published"
     assert published["published_at"] is not None
 
@@ -59,7 +60,7 @@ async def test_publishing_twice_is_idempotent(client: AsyncClient) -> None:
 
     response = await client.post(f"/jobs/{job['id']}/publish")
 
-    assert response.status_code == 200
+    assert response.status_code == 202
     assert response.json()["status"] == "published"
 
 

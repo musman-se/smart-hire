@@ -34,6 +34,8 @@ x-backend: &backend
     # The port *inside* the Compose network is always 5432. DB_HOST_PORT only changes
     # where the database is published on your machine.
     POSTGRES_PORT: 5432
+    TEMPORAL_ADDRESS: temporal:7233
+    REDIS_URL: redis://redis:6379/0
 
 services:
   db:
@@ -55,6 +57,52 @@ services:
       timeout: 3s
       retries: 10
       start_period: 10s
+
+  # Temporal: the workflow engine. It stores every workflow's history, hands tasks to
+  # workers, and retries what fails. `server start-dev` runs the whole server — frontend,
+  # history, matching — in one process with SQLite storage and the web UI built in. That
+  # is a development topology: production runs the services separately against
+  # Postgres or Cassandra, or uses Temporal Cloud.
+  temporal:
+    image: temporalio/temporal:1.9.1
+    container_name: smarthire-temporal
+    restart: unless-stopped
+    command:
+      - server
+      - start-dev
+      - --ip=0.0.0.0
+      - --ui-ip=0.0.0.0
+      # Under the image user's home: a fresh named volume copies that directory's
+      # ownership, so the non-root server can write to it. Workflow history survives
+      # `docker compose down`; `down -v` wipes it with the database.
+      - --db-filename=/home/temporal/temporal.db
+    ports:
+      - "${TEMPORAL_HOST_PORT:-7233}:7233"   # gRPC: workers and the API connect here
+      - "${TEMPORAL_UI_HOST_PORT:-8233}:8233"  # web UI: http://localhost:8233
+    volumes:
+      - temporal-data:/home/temporal
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "localhost:7233"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # Redis: short-lived records with an expiry — idempotency keys today. Configured as
+  # a cache, not a store: no snapshots, no append-only file. Losing it loses only
+  # replays, never data; the database constraints still hold every rule.
+  redis:
+    image: redis:7.4-alpine
+    container_name: smarthire-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "${REDIS_HOST_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   # One-shot: brings the schema up to date, then exits. Running migrations as a distinct
   # step — rather than in the API's startup hook — means a failed migration stops the
@@ -92,6 +140,30 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # Runs workflow and activity code. The API only asks Temporal to *start* a workflow;
+  # this process polls Temporal's task queue and does the work. Several can run side
+  # by side (`docker compose up -d --scale worker=3`) and Temporal spreads tasks across
+  # them — which is why this service, unlike the others, has no fixed container_name:
+  # Docker requires every container's name to be unique.
+  # Code is bind-mounted like the API's, but a worker does not hot-reload:
+  # `docker compose restart worker` after editing workflow or activity code.
+  worker:
+    <<: *backend
+    restart: unless-stopped
+    command: python -m app.worker
+    # Longer than WORKER_SHUTDOWN_GRACE_SECONDS (20), so running activities get their
+    # grace period before Docker escalates to SIGKILL.
+    stop_grace_period: 30s
+    volumes:
+      - ./backend/app:/code/app
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_healthy
+
   # Static build served by nginx, which also proxies /api to the api service. Same origin
   # for app and API, so the project needs no CORS configuration anywhere.
   web:
@@ -124,3 +196,4 @@ services:
 
 volumes:
   pgdata:
+  temporal-data:

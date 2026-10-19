@@ -3,13 +3,13 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import EmailStr, Field, field_validator
 
-from app.core.schemas import PatchModel, ReadModel
+from app.core.schemas import InputModel, PatchModel, ReadModel
 from app.skills.schemas import normalise_skill_names
 
 
-class CandidateBase(BaseModel):
+class CandidateBase(InputModel):
     # EmailStr validates the address on the way in, so the unique constraint never has
     # to arbitrate between "bob@example.com" and "not an email".
     email: EmailStr
@@ -30,6 +30,7 @@ class CandidateBase(BaseModel):
     def normalise_email(cls, value: str) -> str:
         # Stored lowercase so uniqueness is case-insensitive in practice.
         return value.strip().lower()
+
 
 class CandidateCreate(CandidateBase):
     pass

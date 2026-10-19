@@ -5,6 +5,7 @@ import type { JobFilters } from "../api/resources";
 import { EMPLOYMENT_TYPES, JOB_STATUSES, type JobCreate } from "../api/types";
 import { Empty, ErrorNotice, Modal, Pagination, StatusPill, Tags, formatDate } from "../components/ui";
 import { useCreateJob, useDeleteJob, useJobTransition, useJobs } from "../hooks/queries";
+import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
 
 const PAGE_SIZE = 10;
 
@@ -20,6 +21,9 @@ function NewJobForm({ onDone }: { onDone: () => void }) {
     min_experience_years: 0,
     max_applications: "",
   });
+  // A job has no natural unique key: without this, a double-submitted form or a retry
+  // after a timeout creates the job twice.
+  const { key: idempotencyKey, settle } = useIdempotencyKey(form);
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -40,7 +44,10 @@ function NewJobForm({ onDone }: { onDone: () => void }) {
       max_applications: form.max_applications ? Number(form.max_applications) : null,
     };
 
-    createJob.mutate(payload, { onSuccess: onDone });
+    createJob.mutate(
+      { payload, idempotencyKey },
+      { onSettled: (_data, error) => settle(error), onSuccess: onDone },
+    );
   }
 
   return (
@@ -147,7 +154,8 @@ function NewJobForm({ onDone }: { onDone: () => void }) {
       <ErrorNotice error={createJob.error} />
 
       <p className="field-hint" style={{ marginTop: "0.9rem" }}>
-        Jobs are always created as a draft — publishing is a separate, deliberate step.
+        Jobs are always created as a draft. Publishing is a separate step, run as a
+        workflow: the job is <code>processing</code> until its content has been analysed.
       </p>
 
       <div className="modal-actions">
@@ -292,7 +300,8 @@ function JobRow({
   const transition = useJobTransition(job.id);
 
   return (
-    <tr>
+    <>
+      <tr>
       <td>
         <Link to={`/jobs/${job.id}`}>{job.title}</Link>
         <div className="muted" style={{ fontSize: "0.8rem" }}>
@@ -309,17 +318,17 @@ function JobRow({
       <td className="muted">{formatDate(job.published_at)}</td>
       <td className="actions">
         <div className="button-row" style={{ justifyContent: "flex-end" }}>
-          {job.status === "draft" && (
+          {(job.status === "draft" || job.status === "publish_failed") && (
             <button
               type="button"
               className="small"
               disabled={transition.isPending}
               onClick={() => transition.mutate("publish")}
             >
-              Publish
+              {job.status === "publish_failed" ? "Retry" : "Publish"}
             </button>
           )}
-          {job.status === "published" && (
+          {(job.status === "published" || job.status === "processing") && (
             <button
               type="button"
               className="small"
@@ -344,6 +353,16 @@ function JobRow({
           </button>
         </div>
       </td>
-    </tr>
+      </tr>
+      {transition.error && (
+        <tr>
+          <td colSpan={6}>
+            {/* A failed Publish or Retry — a 503 when the workflow engine is down —
+                must be visible here, not swallowed by the list. */}
+            <ErrorNotice error={transition.error} />
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

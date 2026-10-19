@@ -1,12 +1,10 @@
 """Job business logic.
 
-Routers translate HTTP; this module decides what is allowed. Keeping the two apart means
-the publishing rules below are reusable from the Temporal workflow that replaces the
-direct transition in a later module.
+Routers translate HTTP; this module decides what is allowed. Publishing is not here:
+since Module 2 it is a workflow, owned by app/publishing.
 """
 
 import uuid
-from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -69,10 +67,16 @@ async def create_job(session: AsyncSession, payload: JobCreate) -> Job:
 
 
 async def update_job(session: AsyncSession, job_id: uuid.UUID, payload: JobUpdate) -> Job:
-    job = await get_job(session, job_id)
+    # Locked, like every other read-decide-write on a job: without it, a publish or a
+    # close committed between this read and the write below would not stop the edit.
+    job = await get_job(session, job_id, lock=True)
 
     if job.status is JobStatus.CLOSED:
         raise JobNotOpenError("A closed job cannot be edited. Reopen it first.")
+    if job.status is JobStatus.PROCESSING:
+        # The workflow is reading this text right now; an edit would race it, and the
+        # result would describe neither the old text nor the new.
+        raise JobNotOpenError("This job is being published. Edit it once publishing ends.")
 
     # exclude_unset is what makes this a PATCH: a field the client did not send is left
     # alone, rather than being overwritten with the schema default.
@@ -86,28 +90,10 @@ async def update_job(session: AsyncSession, job_id: uuid.UUID, payload: JobUpdat
     return job
 
 
-async def publish_job(session: AsyncSession, job_id: uuid.UUID) -> Job:
-    """draft -> published.
-
-    In Module 2 this becomes a Temporal workflow: extract skills, break the description
-    into components, index for search, and only then mark the job ready. The state
-    machine below is the seam that workflow will slot into.
-    """
-    job = await get_job(session, job_id)
-
-    if job.status is JobStatus.PUBLISHED:
-        return job  # idempotent: publishing twice is not an error
-    if job.status is JobStatus.CLOSED:
-        raise JobNotOpenError("A closed job cannot be published. Reopen it first.")
-
-    job.status = JobStatus.PUBLISHED
-    job.published_at = datetime.now(UTC)
-    await session.commit()
-    return job
-
-
 async def close_job(session: AsyncSession, job_id: uuid.UUID) -> Job:
-    job = await get_job(session, job_id)
+    """-> closed, from any state. Closing mid-publish is allowed: the workflow's final
+    step only moves a job out of PROCESSING, so it leaves a closed job closed."""
+    job = await get_job(session, job_id, lock=True)
     job.status = JobStatus.CLOSED
     await session.commit()
     return job
@@ -116,7 +102,9 @@ async def close_job(session: AsyncSession, job_id: uuid.UUID) -> Job:
 async def reopen_job(session: AsyncSession, job_id: uuid.UUID) -> Job:
     """closed -> draft. Reopening returns a job to draft, not straight to published,
     so it passes through the publishing checks again."""
-    job = await get_job(session, job_id)
+    job = await get_job(session, job_id, lock=True)
+    if job.status is not JobStatus.CLOSED:
+        raise JobNotOpenError(f"Only a closed job can be reopened; this one is {job.status}.")
     job.status = JobStatus.DRAFT
     job.published_at = None
     await session.commit()

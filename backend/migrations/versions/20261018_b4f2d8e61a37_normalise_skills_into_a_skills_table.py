@@ -81,11 +81,14 @@ def upgrade() -> None:
     # --- 2. Data: arrays -> rows ------------------------------------------------------
     # Every distinct name from both arrays becomes one skills row. The API already
     # normalised these on the way in; lower/btrim/left repeat it so a row written by
-    # hand cannot fail the check constraint and abort the migration halfway.
+    # hand cannot fail the check constraint and abort the migration halfway. The outer
+    # btrim runs *after* the cut to 64 characters, which can end on a space. (Corrected
+    # on 2026-10-18; the result is identical for every name the original expression
+    # accepted, so databases that already ran this revision are unaffected.)
     op.execute(
         """
         INSERT INTO skills (name)
-        SELECT DISTINCT left(lower(btrim(raw.name)), 64)
+        SELECT DISTINCT btrim(left(lower(btrim(raw.name)), 64))
         FROM (
             SELECT unnest(required_skills) AS name FROM jobs
             UNION
@@ -103,7 +106,7 @@ def upgrade() -> None:
         SELECT DISTINCT j.id, s.id
         FROM jobs AS j
         CROSS JOIN LATERAL unnest(j.required_skills) AS raw(name)
-        JOIN skills AS s ON s.name = left(lower(btrim(raw.name)), 64)
+        JOIN skills AS s ON s.name = btrim(left(lower(btrim(raw.name)), 64))
         """
     )
     op.execute(
@@ -112,7 +115,7 @@ def upgrade() -> None:
         SELECT DISTINCT c.id, s.id
         FROM candidates AS c
         CROSS JOIN LATERAL unnest(c.skills) AS raw(name)
-        JOIN skills AS s ON s.name = left(lower(btrim(raw.name)), 64)
+        JOIN skills AS s ON s.name = btrim(left(lower(btrim(raw.name)), 64))
         """
     )
 

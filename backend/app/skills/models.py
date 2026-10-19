@@ -48,9 +48,7 @@ class Skill(Base):
     __tablename__ = "skills"
 
     id: Mapped[int] = mapped_column(Integer, Identity(always=True), primary_key=True)
-    name: Mapped[str] = mapped_column(
-        String(SKILL_NAME_MAX_LENGTH), nullable=False, unique=True
-    )
+    name: Mapped[str] = mapped_column(String(SKILL_NAME_MAX_LENGTH), nullable=False, unique=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

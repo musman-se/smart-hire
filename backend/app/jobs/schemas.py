@@ -8,14 +8,19 @@ set (status, published_at) and the API has validation the database does not expr
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 
-from app.core.schemas import PatchModel, ReadModel
+from app.core.schemas import InputModel, PatchModel, ReadModel
 from app.jobs.enums import EmploymentType, JobStatus
 from app.skills.schemas import normalise_skill_names
 
+# Bounds that keep a value inside its column, and a description inside what the
+# publishing workflow analyses comfortably.
+DESCRIPTION_MAX_LENGTH = 20_000
+MAX_APPLICATIONS_CEILING = 100_000
 
-class JobBase(BaseModel):
+
+class JobBase(InputModel):
     title: str = Field(min_length=3, max_length=200)
     description: str = Field(min_length=10)
     department: str | None = Field(default=None, max_length=100)
@@ -35,6 +40,11 @@ class JobCreate(JobBase):
     """Note the absence of `status`. A job is always created as a draft — letting a
     client post status="published" would skip the publishing transition entirely."""
 
+    # The caps apply to input only. JobRead shares JobBase, and it must keep reading
+    # every row already stored — including any saved before these limits existed.
+    description: str = Field(min_length=10, max_length=DESCRIPTION_MAX_LENGTH)
+    max_applications: int | None = Field(default=None, gt=0, le=MAX_APPLICATIONS_CEILING)
+
 
 class JobUpdate(PatchModel):
     """Every field optional: this backs PATCH, where omitted means "leave unchanged".
@@ -49,13 +59,13 @@ class JobUpdate(PatchModel):
     )
 
     title: str | None = Field(default=None, min_length=3, max_length=200)
-    description: str | None = Field(default=None, min_length=10)
+    description: str | None = Field(default=None, min_length=10, max_length=DESCRIPTION_MAX_LENGTH)
     department: str | None = Field(default=None, max_length=100)
     location: str | None = Field(default=None, max_length=120)
     employment_type: EmploymentType | None = None
     required_skills: list[str] | None = None
     min_experience_years: int | None = Field(default=None, ge=0, le=50)
-    max_applications: int | None = Field(default=None, gt=0)
+    max_applications: int | None = Field(default=None, gt=0, le=MAX_APPLICATIONS_CEILING)
 
     @field_validator("required_skills")
     @classmethod
@@ -67,5 +77,11 @@ class JobRead(JobBase, ReadModel):
     id: uuid.UUID
     status: JobStatus
     published_at: datetime | None
+    publish_error: str | None = Field(
+        default=None, description="Why the last publish failed; cleared on success"
+    )
+    content_processed_at: datetime | None = Field(
+        default=None, description="When the publishing workflow last analysed the text"
+    )
     created_at: datetime
     updated_at: datetime

@@ -1,11 +1,16 @@
 # SmartHire — Architecture and Design Decisions
 
-**Module 1: Foundation + Core Services** · 21 September 2026 · revised 18 October 2026
-after the Module 1 review
+**Modules 1 and 2** · Module 1: 21 September 2026, revised after its review ·
+Module 2 (application workflow + publishing pipeline): 18 October 2026
 
 This document covers the service breakdown, data and request flow, and — most of all —
-the decisions taken, the alternatives rejected, and why. The database is covered in
-depth in [DATABASE.md](DATABASE.md), and schema migrations in [MIGRATIONS.md](MIGRATIONS.md).
+the decisions taken, the alternatives rejected, and why. Companion documents:
+
+| Document | Covers |
+|---|---|
+| [WORKFLOWS.md](WORKFLOWS.md) | The two Temporal workflows, their failure modes, how to watch them |
+| [DATABASE.md](DATABASE.md) | Normalisation, constraints, indexes, concurrency |
+| [MIGRATIONS.md](MIGRATIONS.md) | How Alembic works here, and the mistakes it caught |
 
 ---
 
@@ -13,27 +18,41 @@ depth in [DATABASE.md](DATABASE.md), and schema migrations in [MIGRATIONS.md](MI
 
 ```mermaid
 flowchart LR
-    Client["Recruiter / candidate client"]
+    Client["Recruiter console<br/>(web · nginx)"]
 
     subgraph Compose["Docker Compose"]
         subgraph API["api — FastAPI on Uvicorn"]
-            MW["RequestContextMiddleware<br/>assigns request id"]
             R["Routers<br/>parse · delegate · shape"]
             S["Services<br/>business rules"]
-            M["Models<br/>SQLAlchemy"]
         end
+        Worker["worker — app/worker.py<br/>workflows + activities"]
+        Temporal[("temporal<br/>workflow engine + UI")]
+        Redis[("redis<br/>idempotency keys")]
         Migrate["migrate — alembic upgrade head<br/>runs once, then exits"]
         DB[("db — PostgreSQL 17<br/>constraints hold the rules")]
     end
 
-    Client -->|HTTP| MW --> R --> S --> M -->|asyncpg| DB
+    Client -->|HTTP /api| R --> S -->|asyncpg| DB
+    S -->|start workflow| Temporal
+    S -->|SET NX / GET| Redis
+    Worker -->|poll task queue| Temporal
+    Worker -->|activities| DB
     Migrate -->|schema| DB
-    Migrate -.->|must exit 0 first| API
 ```
 
-Three services. `db` starts first and must report healthy; `migrate` then brings the
-schema up to date and exits; only then does `api` start. The API can therefore never
-serve traffic against an outdated schema.
+| Service | Role | If it is down |
+|---|---|---|
+| `db` | The source of truth. Every business rule is a constraint or a locked check here | Nothing works; readiness 503 |
+| `migrate` | Brings the schema to head, then exits 0; the API waits for it | The API does not start |
+| `api` | HTTP: validates, enforces rules, starts workflows | — |
+| `worker` | Runs workflow and activity code; stateless | Workflows wait, then resume when it returns |
+| `temporal` | Records every workflow step, retries, schedules | Publishing answers 503 and changes nothing; applying still succeeds, unscored |
+| `redis` | Idempotency records with an expiry | Requests run unprotected; constraints still refuse duplicates |
+| `web` | Serves the console, proxies `/api` (re-resolving the API's address) | — |
+
+`db` starts first and must report healthy; `migrate` then brings the schema up to date
+and exits; only then do `api` and `worker` start. Neither can run against an outdated
+schema.
 
 ## 2. Packages and layers
 
@@ -194,7 +213,7 @@ single event loop for its connection pool.
 
 ### 4.6 Tests run on real PostgreSQL
 
-**Decision.** A `smarthire_test` database, created on demand, dropped afterwards.
+**Decision.** A `smarthire_test` database, created on demand; its tables are dropped afterwards.
 
 **Alternative rejected.** SQLite in memory.
 
@@ -241,7 +260,8 @@ leaving a half-migrated application serving traffic.
 
 ### 4.10 Terminal stages do not count toward the limit
 
-**Decision.** `hired` and `rejected` applications are excluded from a candidate's active count.
+**Decision.** `hired`, `rejected` and (since Module 2) `withdrawn` applications are excluded
+from a candidate's active count.
 
 **Why.** Otherwise a candidate rejected ten times is permanently locked out of the
 platform — a rule that punishes exactly the people who most need to keep applying. The
@@ -295,21 +315,114 @@ variable and validated at startup. One root `.env` feeds Compose and the backend
 different variables. A value hard-coded anywhere else is a value someone will forget to
 change.
 
-## 5. What Module 1 does not do
+### 4.15 Temporal for publishing, not a task queue
 
-| Gap | Where it belongs |
+**Decision.** The publishing pipeline is a Temporal workflow (`PublishJobWorkflow`).
+
+**Alternative rejected.** A Celery task, or FastAPI `BackgroundTasks`.
+
+**Why.** Publishing is several dependent steps with a rule about their order — "mark the
+job ready only after all processing is complete" — and a requirement that partial
+failure must not corrupt it. A task queue runs *one* function and forgets; the steps,
+their retries and what-to-do-on-failure would all be hand-written, and a crash mid-way
+would leave no record of how far it got. Temporal records every completed step, so a
+crashed run resumes rather than restarts, and the whole history is inspectable.
+`BackgroundTasks` runs inside the API process and dies with it.
+
+**Tradeoff.** Two more services (server, worker) to run, and a determinism discipline in
+workflow code. A one-step fire-and-forget job — sending one email — would not justify
+it; Celery stays the right tool for those, in Module 3.
+
+### 4.16 Activities are idempotent; the job flips to ready last
+
+**Decision.** Every activity can run twice with the same effect as once: reads,
+a replace-all transaction, and compare-and-set updates (`WHERE status = 'processing'`).
+The job becomes `published` only in the final activity.
+
+**Why.** Temporal guarantees *at-least-once* execution of activities: a worker can do the
+work and crash before reporting it. Idempotency is what makes "retry" safe. Ordering the
+visible state change last means a partial run is never visible to candidates.
+
+### 4.17 Commit, then start, then compensate
+
+**Decision.** `POST /publish` commits `processing`, then starts the workflow; if the start
+fails it reverts the status and answers 503. A job left in `processing` by a crash
+between the two is healed by publishing again.
+
+**Alternative rejected.** Starting the workflow first (it could run before the status
+commits and find a draft), or a distributed transaction (Temporal and Postgres share
+none).
+
+**Why.** Two systems, no shared transaction — the "dual write". Ordering plus
+compensation is the simplest correct answer at this scale. The transactional outbox,
+arriving with Kafka in Module 3, is the general one. The row lock is released before
+calling Temporal: a database lock is never held across a network call.
+
+### 4.18 Applying stays synchronous; processing is follow-up work
+
+**Decision.** The application and its first history row are committed in the request;
+scoring and the confirmation run afterwards, in `ProcessApplicationWorkflow`.
+
+**Why.** The application is the record the candidate is owed; it must not depend on a
+workflow engine being up. The follow-ups may lag or retry. If Temporal is down the
+candidate still gets a 201, and `POST /applications/{id}/process` recovers the rest.
+
+### 4.19 Idempotency keys in Redis, failing open
+
+**Decision.** `Idempotency-Key` on every create endpoint; records in Redis with a 24-hour
+expiry; claimed with `SET NX`.
+
+**Alternative rejected.** An `idempotency_keys` table in Postgres.
+
+**Why.** Records are small, short-lived and need an atomic claim and an expiry — Redis
+does all three natively; Postgres would need a cleanup job. Losing Redis loses only
+replays, so it fails open: the database constraints still refuse duplicates. Layered
+defence: the key upgrades "refused" to "the original answer"; it is never the only guard.
+
+**Tradeoff.** The response is stored after the commit, not with it. If the process dies
+between the two, the claim stays "in progress" until it expires (60 s); a retry after
+that runs the action again. For an application or a candidate the database then refuses
+the duplicate (409) — correct data, a less friendly answer. **For a job, which has no
+natural unique key, the retry creates a second job.** Closing that window means storing
+the key in Postgres in the same transaction as the row it protects — the upgrade path if
+it ever matters. Only 2xx and 4xx are stored; a 5xx releases the key. Keys are scoped by
+endpoint; once authentication exists they should be scoped per user too.
+
+The console renews its key once the server has answered: a key belongs to one attempt to
+do one thing, and reusing it after a refusal would replay that refusal for a day.
+
+### 4.20 Withdrawal is a stage, history is append-only
+
+**Decision.** `WITHDRAWN` is a terminal stage; `application_stage_changes` records every
+move in the same transaction as the move.
+
+**Why.** Module 1's withdraw deleted the row — the one operation that destroyed history.
+The brief asks for recovery "without losing application history", and Module 3's
+analytics (time to hire, conversion) need the timeline, not just the current stage.
+
+### 4.21 Workflow tests run on a real Temporal server
+
+**Decision.** The API tests run the activities inline (`tests/fakes.py`); separate tests
+run the real workflows on the Compose Temporal server with the production worker.
+
+**Why.** Inline runs keep the API tests fast and deterministic; only a real server proves
+retries, compensation and non-retryable failures. The SDK's own test server could not be
+downloaded behind this network's TLS inspection, so these tests use the Compose server
+and skip without it — the same approach as Postgres.
+
+## 5. Gaps
+
+| Gap | Status / where it belongs |
 |---|---|
-| **No authentication** — every endpoint is open | The most significant gap. Needs a dependency resolving the caller and role checks on every route |
-| Publishing is synchronous, no skill extraction | Module 2 — Temporal workflow |
-| No events emitted on publish or apply | Module 3 — Kafka |
-| `match_score` is always null | Module 3/4 — scoring worker |
-| Exact-string skill matching only | Module 4 — embeddings and semantic search |
+| **No authentication** — every endpoint is open | The most significant gap; for the follow-up session. A `CurrentUser` dependency, roles, and identity from the token rather than the request body |
+| ~~Publishing is synchronous, no skill extraction~~ | Module 2 — `PublishJobWorkflow` |
+| ~~`match_score` is always null~~ | Module 2 — `ProcessApplicationWorkflow`, rule-based score |
+| ~~Withdrawing deletes the application~~ | Module 2 — `withdrawn` stage + history |
+| ~~Retried creates duplicate or mis-report~~ | Module 2 — Idempotency-Key |
+| No events emitted on publish or apply; no analytics | Module 3 — Kafka, consumers, the transactional outbox |
+| Exact-string skill matching | Module 4 — embeddings and semantic search |
 | Logs only; no metrics or traces | Module 3 — OpenTelemetry. The request id is the seam |
 | Offset pagination drifts under concurrent inserts | Keyset pagination when volume demands it |
 | ~~Unindexed search, redundant indexes~~ | Fixed after review — [DATABASE.md §4](DATABASE.md#4-indexes) |
 | ~~Count-then-insert race on application limits~~ | Fixed after review — row locks |
 | No rate limiting | Before any public exposure |
-
-The seams for these are already in place: the publishing transition is one function, the
-services are HTTP-free, and request context flows through a contextvar that a trace id
-can replace.

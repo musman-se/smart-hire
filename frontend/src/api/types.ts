@@ -23,6 +23,12 @@ export type CandidateUpdate = Schemas["CandidateUpdate"];
 export type Application = Schemas["ApplicationRead"];
 export type ApplicationCreate = Schemas["ApplicationCreate"];
 export type ApplicationStage = Schemas["ApplicationStage"];
+export type StageChange = Schemas["StageChangeRead"];
+export type Notification = Schemas["NotificationRead"];
+
+export type JobContent = Schemas["JobContentRead"];
+export type Publication = Schemas["PublicationRead"];
+export type Skill = Schemas["SkillRead"];
 
 export type EmploymentType = Schemas["EmploymentType"];
 
@@ -34,7 +40,13 @@ export interface Page<T> {
   offset: number;
 }
 
-export const JOB_STATUSES = ["draft", "published", "closed"] as const;
+export const JOB_STATUSES = [
+  "draft",
+  "processing",
+  "published",
+  "publish_failed",
+  "closed",
+] as const;
 
 export const APPLICATION_STAGES = [
   "applied",
@@ -43,7 +55,15 @@ export const APPLICATION_STAGES = [
   "offer",
   "hired",
   "rejected",
+  "withdrawn",
 ] as const;
+
+/** Mirrors ApplicationStage.terminal() — these stop counting toward the limit. */
+export const TERMINAL_STAGES: ReadonlySet<ApplicationStage> = new Set([
+  "hired",
+  "rejected",
+  "withdrawn",
+]);
 
 export const EMPLOYMENT_TYPES = [
   "full_time",
@@ -60,10 +80,11 @@ export const EMPLOYMENT_TYPES = [
  * only ever show a wrong button — it can never let an illegal transition through.
  */
 export const NEXT_STAGES: Record<ApplicationStage, ApplicationStage[]> = {
-  applied: ["screening", "rejected"],
-  screening: ["interview", "rejected"],
-  interview: ["offer", "rejected"],
-  offer: ["hired", "rejected"],
+  applied: ["screening", "rejected", "withdrawn"],
+  screening: ["interview", "rejected", "withdrawn"],
+  interview: ["offer", "rejected", "withdrawn"],
+  offer: ["hired", "rejected", "withdrawn"],
   hired: [],
   rejected: [],
+  withdrawn: [],
 };

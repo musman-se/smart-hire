@@ -6,7 +6,7 @@ import { ApiError } from "../api/client";
 import type { ApplicationStage, JobStatus } from "../api/types";
 
 export function StatusPill({ status }: { status: JobStatus }) {
-  return <span className={`pill pill-${status}`}>{status}</span>;
+  return <span className={`pill pill-${status}`}>{status.replace("_", " ")}</span>;
 }
 
 export function StagePill({ stage }: { stage: ApplicationStage }) {
@@ -43,6 +43,9 @@ const RULE_COPY: Record<string, { title: string; rule: boolean }> = {
   job_not_open: { title: "Job is not accepting applications", rule: true },
   invalid_stage_transition: { title: "That stage change is not allowed", rule: true },
   duplicate_email: { title: "Email already registered", rule: true },
+  workflow_unavailable: { title: "The workflow engine is unavailable", rule: false },
+  idempotency_in_progress: { title: "Still processing your first attempt", rule: true },
+  idempotency_key_reused: { title: "Request changed since the first attempt", rule: false },
   validation_error: { title: "Check the form", rule: false },
   not_found: { title: "Not found", rule: false },
   internal_error: { title: "Something went wrong", rule: false },
@@ -146,6 +149,17 @@ export function Pagination({
 
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
+}
+
+export function formatDateTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  return new Date(value).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 export function formatDate(value: string | null | undefined): string {

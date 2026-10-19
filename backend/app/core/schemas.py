@@ -1,6 +1,6 @@
 """Schema base classes and response shapes shared by every domain."""
 
-from typing import ClassVar, Self
+from typing import Any, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -29,7 +29,26 @@ class ErrorResponse(BaseModel):
     error: ErrorBody
 
 
-class PatchModel(BaseModel):
+class InputModel(BaseModel):
+    """Base for every request body.
+
+    Rejects the NUL character in any text. Postgres cannot store it in a text column, so
+    without this check the request passes validation and then fails in the database as a
+    500, instead of a 422 naming the problem.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_nul(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for value in data.values():
+                texts = value if isinstance(value, list) else [value]
+                if any(isinstance(text, str) and "\x00" in text for text in texts):
+                    raise ValueError("text may not contain the NUL character")
+        return data
+
+
+class PatchModel(InputModel):
     """Base for PATCH bodies.
 
     Every field is optional, because PATCH means "change only what I send". That makes

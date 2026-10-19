@@ -10,13 +10,12 @@ for an OpenTelemetry trace id changes this file and nothing else.
 """
 
 import logging
+import re
 import sys
 import uuid
 from contextvars import ContextVar
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 REQUEST_ID_HEADER = "X-Request-ID"
 
@@ -37,20 +36,48 @@ class RequestIdFilter(logging.Filter):
         return True
 
 
-class RequestContextMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next) -> Response:
-        # Honour an incoming id so a trace survives across service boundaries later.
-        incoming = request.headers.get(REQUEST_ID_HEADER)
-        request_id = incoming or uuid.uuid4().hex
-        token = _request_id.set(request_id)
+# An incoming id is echoed into a response header and every log line, so only a safe,
+# bounded shape is accepted; anything else gets a fresh id.
+_VALID_INCOMING_ID = re.compile(r"[A-Za-z0-9._-]{1,128}")
 
-        try:
-            response = await call_next(request)
-        finally:
-            _request_id.reset(token)
 
-        response.headers[REQUEST_ID_HEADER] = request_id
-        return response
+class RequestContextMiddleware:
+    """Gives every request an id: on each log line it produces, in the X-Request-ID
+    response header, and in every error body.
+
+    A plain ASGI middleware, deliberately not Starlette's BaseHTTPMiddleware. The id has
+    to stay set until the response is *sent*: uvicorn writes its access-log line then,
+    and an unhandled exception becomes its 500 response in Starlette's outermost
+    ServerErrorMiddleware — after this middleware has returned. The first version reset
+    the id the moment the handler returned, so access logs and every 500 lost it.
+
+    Nothing is reset afterwards, and nothing needs to be: the server runs each request
+    in its own task, with its own copy of the context, so one request's id cannot leak
+    into another's.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # Honour an incoming id, so one id can follow a request across services.
+        incoming = dict(scope.get("headers") or []).get(REQUEST_ID_HEADER.lower().encode())
+        decoded = incoming.decode("latin-1") if incoming else ""
+        request_id = decoded if _VALID_INCOMING_ID.fullmatch(decoded) else uuid.uuid4().hex
+        _request_id.set(request_id)
+
+        async def send_with_id(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers") or [])
+                headers.append((REQUEST_ID_HEADER.encode(), request_id.encode()))
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_id)
 
 
 def configure_logging(level: str = "INFO") -> None:

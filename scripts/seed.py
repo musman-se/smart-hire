@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -130,6 +131,25 @@ def code_of(payload: dict) -> str:
     return payload.get("error", {}).get("code", "?")
 
 
+def publish_and_wait(job: dict, timeout: float = 60) -> dict:
+    """Publishing answers 202 and runs as a workflow; wait for it to finish.
+
+    Exactly what any client of a 202 endpoint must do: a job is not open for
+    applications until the workflow has moved it from processing to published.
+    """
+    status, accepted = call("POST", f"/jobs/{job['id']}/publish")
+    if status != 202:
+        return accepted
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        _, current = call("GET", f"/jobs/{job['id']}")
+        if current.get("status") != "processing":
+            return current
+        time.sleep(0.5)
+    print(f"  ! {job['title']} still processing after {timeout:.0f}s — is the worker running?")
+    return current
+
+
 def main() -> None:
     print(f"Seeding {BASE}\n")
 
@@ -154,7 +174,7 @@ def main() -> None:
             print(f"  job  {spec['title']:<28} skipped ({code_of(job)})")
             continue
         if publish:
-            _, job = call("POST", f"/jobs/{job['id']}/publish")
+            job = publish_and_wait(job)
         jobs.append(job)
         print(f"  job  {job['title']:<28} {job['status']}")
 
