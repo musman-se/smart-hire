@@ -35,6 +35,7 @@ x-backend: &backend
     # where the database is published on your machine.
     POSTGRES_PORT: 5432
     TEMPORAL_ADDRESS: temporal:7233
+    REDIS_URL: redis://redis:6379/0
 
 services:
   db:
@@ -86,6 +87,22 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
+
+  # Redis: short-lived records with an expiry — idempotency keys today. Configured as
+  # a cache, not a store: no snapshots, no append-only file. Losing it loses only
+  # replays, never data; the database constraints still hold every rule.
+  redis:
+    image: redis:7.4-alpine
+    container_name: smarthire-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "${REDIS_HOST_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   # One-shot: brings the schema up to date, then exits. Running migrations as a distinct
   # step — rather than in the API's startup hook — means a failed migration stops the

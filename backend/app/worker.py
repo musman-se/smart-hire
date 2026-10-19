@@ -21,6 +21,8 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 import app.models  # noqa: F401 — registers every model, so relationships resolve
+from app.applications.activities import ApplicationActivities
+from app.applications.workflow import ProcessApplicationWorkflow
 from app.core.config import settings
 from app.core.db import SessionLocal, engine
 from app.core.logging import configure_logging
@@ -37,11 +39,12 @@ def build_worker(client: Client, task_queue: str, session_factory=SessionLocal) 
     the test database and a private task queue.
     """
     publishing = PublishingActivities(session_factory)
+    applications = ApplicationActivities(session_factory)
     return Worker(
         client,
         task_queue=task_queue,
-        workflows=[PublishJobWorkflow],
-        activities=publishing.all(),
+        workflows=[PublishJobWorkflow, ProcessApplicationWorkflow],
+        activities=publishing.all() + applications.all(),
     )
 
 

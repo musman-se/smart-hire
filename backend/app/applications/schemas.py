@@ -25,6 +25,16 @@ class ApplicationStageUpdate(BaseModel):
     """
 
     stage: ApplicationStage
+    note: str | None = Field(
+        default=None, max_length=1000, description="Why — kept in the application's history"
+    )
+
+
+class StageChangeRead(ReadModel):
+    from_stage: ApplicationStage | None
+    to_stage: ApplicationStage
+    note: str | None
+    changed_at: datetime
 
 
 class ApplicationRead(ReadModel):
@@ -32,6 +42,9 @@ class ApplicationRead(ReadModel):
     job_id: uuid.UUID
     candidate_id: uuid.UUID
     stage: ApplicationStage
+    note: str | None = Field(
+        default=None, max_length=1000, description="Why — kept in the application's history"
+    )
     cover_letter: str | None
     match_score: float | None = Field(
         default=None, description="Populated by the scoring worker in a later module"

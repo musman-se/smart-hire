@@ -7,9 +7,11 @@ about what is allowed lives in app.jobs.service.
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Request, status
+from fastapi.responses import JSONResponse
 
 from app.core.db import SessionDep
+from app.core.idempotency import IdempotencyDep, IdempotencyKey
 from app.core.pagination import Page, PaginationDep
 from app.jobs import service as job_service
 from app.jobs.enums import JobStatus
@@ -42,9 +44,25 @@ async def list_jobs(
 @router.post(
     "", response_model=JobRead, status_code=status.HTTP_201_CREATED, summary="Create a job"
 )
-async def create_job(session: SessionDep, payload: JobCreate) -> JobRead:
-    job = await job_service.create_job(session, payload)
-    return JobRead.model_validate(job)
+async def create_job(
+    session: SessionDep,
+    idempotency: IdempotencyDep,
+    request: Request,
+    payload: JobCreate,
+    idempotency_key: IdempotencyKey = None,
+) -> JSONResponse:
+    # A job has no natural unique key, so without an Idempotency-Key a retried POST
+    # creates a second, identical job.
+    async def create() -> JobRead:
+        return JobRead.model_validate(await job_service.create_job(session, payload))
+
+    return await idempotency.run(
+        key=idempotency_key,
+        request=request,
+        body=payload,
+        status_code=status.HTTP_201_CREATED,
+        operation=create,
+    )
 
 
 @router.get("/{job_id}", response_model=JobRead, summary="Get one job")

@@ -167,3 +167,32 @@ def test_removing_job_statuses_moves_jobs_back_to_draft(alembic_config: Config) 
         "SELECT enumlabel FROM pg_enum JOIN pg_type t ON t.oid = enumtypid "
         "WHERE t.typname = 'job_status' ORDER BY enumsortorder"
     ) == [("DRAFT",), ("PUBLISHED",), ("CLOSED",)]
+
+
+def test_stage_history_is_backfilled_for_existing_applications(alembic_config: Config) -> None:
+    """f2c7a91d4e65 gives every pre-existing application one honest history row."""
+    command.upgrade(alembic_config, "c8b41f6e2d93")
+    _query(
+        """
+        INSERT INTO jobs (id, title, description, employment_type, status)
+        VALUES ('00000000-0000-0000-0000-000000000004', 'Role', 'A job.', 'FULL_TIME', 'PUBLISHED')
+        """
+    )
+    _query(
+        """
+        INSERT INTO candidates (id, email, full_name)
+        VALUES ('00000000-0000-0000-0000-000000000005', 'h@example.com', 'Hist Person')
+        """
+    )
+    _query(
+        """
+        INSERT INTO applications (id, job_id, candidate_id, stage)
+        VALUES ('00000000-0000-0000-0000-000000000006', '00000000-0000-0000-0000-000000000004',
+                '00000000-0000-0000-0000-000000000005', 'INTERVIEW')
+        """
+    )
+
+    command.upgrade(alembic_config, "f2c7a91d4e65")
+
+    rows = _query("SELECT from_stage::text, to_stage::text FROM application_stage_changes")
+    assert rows == [(None, "INTERVIEW")]

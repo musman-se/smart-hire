@@ -6,12 +6,12 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.temporal import WorkflowUnavailableError
 from app.jobs.enums import JobStatus
 from app.jobs.errors import JobNotOpenError
 from app.jobs.models import Job
 from app.jobs.service import get_job
 from app.publishing.enums import SectionKind
-from app.publishing.errors import WorkflowUnavailableError
 from app.publishing.models import JobKeyword, JobSection, job_extracted_skills
 from app.publishing.publisher import JobPublisher
 from app.publishing.schemas import (
