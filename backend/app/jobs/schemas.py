@@ -22,13 +22,13 @@ MAX_APPLICATIONS_CEILING = 100_000
 
 class JobBase(InputModel):
     title: str = Field(min_length=3, max_length=200)
-    description: str = Field(min_length=10, max_length=DESCRIPTION_MAX_LENGTH)
+    description: str = Field(min_length=10)
     department: str | None = Field(default=None, max_length=100)
     location: str | None = Field(default=None, max_length=120)
     employment_type: EmploymentType = EmploymentType.FULL_TIME
     required_skills: list[str] = Field(default_factory=list)
     min_experience_years: int = Field(default=0, ge=0, le=50)
-    max_applications: int | None = Field(default=None, gt=0, le=MAX_APPLICATIONS_CEILING)
+    max_applications: int | None = Field(default=None, gt=0)
 
     @field_validator("required_skills")
     @classmethod
@@ -39,6 +39,11 @@ class JobBase(InputModel):
 class JobCreate(JobBase):
     """Note the absence of `status`. A job is always created as a draft — letting a
     client post status="published" would skip the publishing transition entirely."""
+
+    # The caps apply to input only. JobRead shares JobBase, and it must keep reading
+    # every row already stored — including any saved before these limits existed.
+    description: str = Field(min_length=10, max_length=DESCRIPTION_MAX_LENGTH)
+    max_applications: int | None = Field(default=None, gt=0, le=MAX_APPLICATIONS_CEILING)
 
 
 class JobUpdate(PatchModel):

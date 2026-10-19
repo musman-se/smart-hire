@@ -262,44 +262,72 @@ KNOWN_SKILLS = frozenset(
 AMBIGUOUS_SKILLS = frozenset({"go", "r", "c", "d", "less", "make", "spring", "rest", "express"})
 
 
-# A word in a skill or in text: letters and digits, plus the symbols skill names use
-# inside them — "c++", "c#", "node.js", "ci/cd". Hyphens are treated as spaces, so
-# "machine-learning" and "machine learning" are the same phrase.
-_SKILL_WORD = re.compile(r"[a-z0-9][a-z0-9+#./]*")
+# Characters that may not touch a skill on either side. A match must not start right
+# after a letter or digit ("java" in "javascript"), nor end right before one, or before
+# "+" or "#" ("c" in "c++"). Anything else — space, "/", ".", ",", a bracket — is a
+# boundary, so "Python/Django", "HTML/CSS" and "React.js" each yield their skills.
+def _word_char(c: str) -> bool:
+    return "a" <= c <= "z" or "0" <= c <= "9"
 
 
-def _words(text: str) -> list[str]:
-    return [w.rstrip("./") for w in _SKILL_WORD.findall(text.lower().replace("-", " "))]
+def _ends_word(c: str) -> bool:
+    return not (_word_char(c) or c in "+#")
+
+
+_SEP = "\x00sep"  # trie edge for "-" in a skill name: matches one whitespace or hyphen
+_END = "\x00end"  # trie key holding the skills whose spelling ends at this node
+
+
+def _build_trie(vocabulary: Iterable[str]) -> dict:
+    root: dict = {}
+    for skill in sorted(set(vocabulary)):  # sorted: the same result in every process
+        if not skill or skill in AMBIGUOUS_SKILLS:
+            continue
+        node = root
+        for ch in skill:
+            node = node.setdefault(_SEP if ch == "-" else ch, {})
+        node.setdefault(_END, []).append(skill)
+    return root
 
 
 def find_skills(text: str, vocabulary: Iterable[str]) -> dict[str, int]:
     """Skills from the vocabulary that the text mentions, with a mention count.
 
-    Matched as whole words or phrases, so "java" does not match "javascript", and
-    symbols in names ("c++", "node.js") are taken literally.
+    Matched as whole words or phrases, so "java" does not match "javascript"; symbols
+    in names ("c++", "node.js", ".net") are taken literally; a hyphen in a skill name
+    matches one space or hyphen, so "machine-learning" finds "machine learning".
 
-    One pass over the text, whatever the size of the vocabulary: the text is split into
-    words once, and every run of one to N consecutive words (N = the longest skill, in
-    words) is looked up in a set. The first version ran one regular-expression scan of
-    the whole text *per skill* — cost growing with vocabulary x text, which a large
-    skills table and a long description turn into seconds of CPU per publish.
+    The rules are exactly those of the first version, which ran one regular expression
+    per skill: (?<![a-z0-9])<skill>(?![a-z0-9+#]). That cost grew with vocabulary x
+    text. Now every spelling sits in one character trie, walked from each position in
+    the text that may start a match — one pass, however large the vocabulary. (A second
+    version split the text into words instead; it broke "Python/Django" and counted a
+    trailing skill several times. tests/test_content_analysis.py pins the rules down.)
     """
-    wanted: dict[tuple[str, ...], str] = {}
-    for skill in vocabulary:
-        if not skill or skill in AMBIGUOUS_SKILLS:
-            continue
-        phrase = tuple(_words(skill))
-        if phrase:
-            wanted.setdefault(phrase, skill)
-    if not wanted:
+    root = _build_trie(vocabulary)
+    if not root:
         return {}
 
-    longest = max(len(phrase) for phrase in wanted)
-    words = _words(text)
+    lowered = text.lower()
+    n = len(lowered)
     found: dict[str, int] = {}
-    for start in range(len(words)):
-        for size in range(1, longest + 1):
-            skill = wanted.get(tuple(words[start : start + size]))
-            if skill is not None:
-                found[skill] = found.get(skill, 0) + 1
-    return found
+    resume_at: dict[str, int] = {}  # per skill, like re.findall: matches never overlap
+
+    for i in range(n):
+        if i > 0 and _word_char(lowered[i - 1]):
+            continue
+        stack = [(root, i)]
+        while stack:
+            node, j = stack.pop()
+            if _END in node and (j == n or _ends_word(lowered[j])):
+                for skill in node[_END]:
+                    if i >= resume_at.get(skill, 0):
+                        found[skill] = found.get(skill, 0) + 1
+                        resume_at[skill] = j
+            if j < n:
+                c = lowered[j]
+                if c in node:
+                    stack.append((node[c], j + 1))
+                if _SEP in node and (c == "-" or c.isspace()):
+                    stack.append((node[_SEP], j + 1))
+    return dict(sorted(found.items()))

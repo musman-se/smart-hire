@@ -10,7 +10,7 @@ import uuid
 import pytest
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from temporalio.exceptions import ApplicationError
 
@@ -174,6 +174,26 @@ async def test_bad_input_is_a_validation_error_not_a_500(client: AsyncClient, bo
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
+
+
+async def test_a_row_stored_before_the_input_caps_still_reads_and_publishes(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    """The caps once sat on the schema JobRead shares, so a row saved before they
+    existed — a long description, a large cap — failed validation on every read: a 500
+    on the job page and on the list that included it."""
+    job = await make_job(client, publish=False)
+    await session.execute(
+        update(Job)
+        .where(Job.id == uuid.UUID(job["id"]))
+        .values(description="Build things with Python. " * 1_000, max_applications=10**9)
+    )
+    await session.commit()
+
+    assert (await client.get(f"/jobs/{job['id']}")).status_code == 200
+    assert (await client.get("/jobs")).status_code == 200
+    assert (await client.post(f"/jobs/{job['id']}/publish")).status_code == 202
+    assert (await client.get(f"/jobs/{job['id']}")).json()["status"] == "published"
 
 
 async def test_an_absurd_offset_is_a_validation_error(client: AsyncClient) -> None:

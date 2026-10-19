@@ -35,6 +35,7 @@ from temporalio.exceptions import ApplicationError
 from app.core.config import settings
 from app.jobs.enums import JobStatus
 from app.jobs.models import Job
+from app.jobs.schemas import DESCRIPTION_MAX_LENGTH
 from app.publishing.content import (
     KNOWN_SKILLS,
     DescriptionBreakdown,
@@ -103,7 +104,9 @@ class PublishingActivities:
         async with self._sessions() as session:
             job = await self._load_job(session, job_id)
             known = set(await session.scalars(select(Skill.name)))
-            title, description = job.title, job.description
+            # Capped like new input: a row saved before the cap existed is analysed in
+            # full up to it, rather than overflowing a column on every retry.
+            title, description = job.title, job.description[:DESCRIPTION_MAX_LENGTH]
             # The recruiter's own required skills count as vocabulary too, so a niche
             # skill they listed is found in the text even on a fresh installation.
             vocabulary = known | KNOWN_SKILLS | set(job.required_skills)
@@ -118,7 +121,8 @@ class PublishingActivities:
     async def break_down_description(self, job_id: str) -> DescriptionBreakdown:
         """Brief step 2: break the description into its components."""
         async with self._sessions() as session:
-            description = (await self._load_job(session, job_id)).description
+            job = await self._load_job(session, job_id)
+            description = job.description[:DESCRIPTION_MAX_LENGTH]
         return await asyncio.to_thread(break_down_description, description)
 
     @activity.defn(name="store_job_content")

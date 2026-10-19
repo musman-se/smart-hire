@@ -100,3 +100,45 @@ def test_ambiguous_english_words_are_never_matched_from_text() -> None:
     found = find_skills("Ready to go? Less is more.", {"go", "less"} | KNOWN_SKILLS)
 
     assert "go" not in found and "less" not in found
+
+
+# The cases below pin down the rules of the original one-regex-per-skill matcher, which
+# a faster rewrite once broke. Any boundary but a letter, digit, "+" or "#" separates.
+
+
+def test_skills_joined_by_punctuation_are_each_found() -> None:
+    found = find_skills(
+        "Python/Django, HTML/CSS, React.js, Node.js/Express, C#.NET and CI/CD/GitOps.",
+        KNOWN_SKILLS | {".net"},
+    )
+
+    assert {"python", "django", "html", "css", "react", "node.js", "c#", ".net", "ci/cd"} <= (
+        found.keys()
+    )
+
+
+def test_a_skill_at_the_end_of_the_text_is_counted_once() -> None:
+    assert find_skills("We use Kafka", {"kafka"}) == {"kafka": 1}
+    assert find_skills("Kafka. Kafka", {"kafka"}) == {"kafka": 2}
+
+
+def test_a_phrase_does_not_match_across_punctuation() -> None:
+    assert find_skills("Machine. Learning is optional.", {"machine-learning"}) == {}
+
+
+def test_a_dotted_skill_does_not_match_the_bare_word() -> None:
+    assert find_skills("Net salary is competitive.", {".net"}) == {}
+    assert find_skills("We ship on .NET 8.", {".net"}) == {".net": 1}
+
+
+def test_non_ascii_skills_are_matched() -> None:
+    assert find_skills("Fluent 日本語 required.", {"日本語"}) == {"日本語": 1}
+
+
+def test_skill_results_are_deterministic_and_sorted() -> None:
+    text = "Kafka, Docker, Python, Kubernetes, Redis and Terraform."
+
+    results = [find_skills(text, set(KNOWN_SKILLS)) for _ in range(3)]
+
+    assert results[0] == results[1] == results[2]
+    assert list(results[0]) == sorted(results[0])
