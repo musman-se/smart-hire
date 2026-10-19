@@ -124,3 +124,34 @@ async def test_redis_down_fails_open(client: AsyncClient) -> None:
 
     assert response.status_code == 201
     await dead.aclose()
+
+
+async def test_a_server_side_failure_is_not_replayed(test_redis: Redis) -> None:
+    """A 5xx says a dependency was down, not what the answer is. The key is released,
+    so the retry runs the action again instead of replaying the outage for a day."""
+    from starlette.requests import Request
+
+    from app.core.temporal import WorkflowUnavailableError
+
+    store = IdempotencyStore(test_redis, ttl_seconds=60, lock_seconds=60)
+    request = Request({"type": "http", "method": "POST", "path": "/jobs/x/publish", "headers": []})
+    calls = 0
+
+    async def flaky_dependency() -> dict:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise WorkflowUnavailableError()
+        return {"ok": True}
+
+    with pytest.raises(WorkflowUnavailableError):
+        await store.run(
+            key="key-5xx-1", request=request, body=None, status_code=202, operation=flaky_dependency
+        )
+    retry = await store.run(
+        key="key-5xx-1", request=request, body=None, status_code=202, operation=flaky_dependency
+    )
+
+    assert calls == 2
+    assert retry.status_code == 202
+    assert "Idempotent-Replayed" not in retry.headers

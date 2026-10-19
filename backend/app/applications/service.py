@@ -35,6 +35,7 @@ from app.applications.schemas import ApplicationCreate
 from app.candidates.models import Candidate
 from app.candidates.service import get_candidate
 from app.core.config import settings
+from app.core.errors import DomainError
 from app.jobs.enums import JobStatus
 from app.jobs.errors import JobNotOpenError
 from app.jobs.models import Job
@@ -124,6 +125,20 @@ async def _count_job_applications(session: AsyncSession, job_id: uuid.UUID) -> i
 async def apply_to_job(
     session: AsyncSession, job_id: uuid.UUID, payload: ApplicationCreate
 ) -> Application:
+    try:
+        return await _apply(session, job_id, payload)
+    except DomainError:
+        # A refusal ends the transaction at once. Otherwise the job and candidate row
+        # locks taken below would be held while the caller stores the refusal (the
+        # idempotency record, in Redis) and the request winds down — serialising every
+        # other application to this job behind a network call.
+        await session.rollback()
+        raise
+
+
+async def _apply(
+    session: AsyncSession, job_id: uuid.UUID, payload: ApplicationCreate
+) -> Application:
     # Lock the job row, then the candidate row, until this transaction commits.
     #
     # Rule 3 counts applications and then inserts one. Without the locks, five requests
@@ -147,9 +162,7 @@ async def apply_to_job(
 
     # A draft job is not visible to candidates; a closed one is no longer accepting.
     if job.status is not JobStatus.PUBLISHED:
-        raise JobNotOpenError(
-            f"Job {job.id} is {job.status} and is not accepting applications."
-        )
+        raise JobNotOpenError(f"Job {job.id} is {job.status} and is not accepting applications.")
 
     _check_eligibility(job, candidate)
 
@@ -203,9 +216,7 @@ async def apply_to_job(
         # constraint caught what the pre-check could not.
         await session.rollback()
         logger.info("duplicate_application_race job=%s candidate=%s", job.id, candidate.id)
-        raise DuplicateApplicationError(
-            "This candidate has already applied to this job."
-        ) from exc
+        raise DuplicateApplicationError("This candidate has already applied to this job.") from exc
 
     logger.info(
         "application_created id=%s job=%s candidate=%s", application.id, job.id, candidate.id

@@ -45,8 +45,9 @@ class Job(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     # Set by the publishing workflow. publish_error explains the last failed attempt, so
     # a recruiter sees why rather than a job stuck in limbo; it is cleared on success.
-    # content_processed_at is when the description was last broken down — if it is older
-    # than updated_at, a re-run is due or in progress.
+    # content_processed_at is when the description was last analysed. (It is not a
+    # staleness signal against updated_at: marking the job published moves updated_at
+    # too, just after the content is stored.)
     publish_error: Mapped[str | None] = mapped_column(Text)
     content_processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

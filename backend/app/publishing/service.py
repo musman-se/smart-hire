@@ -3,7 +3,7 @@
 import logging
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import WorkflowUnavailableError
@@ -35,10 +35,10 @@ async def publish_job(session: AsyncSession, publisher: JobPublisher, job_id: uu
 
     Returns at once — the work happens in the worker — so the endpoint answers 202.
 
-    Idempotent from every state it accepts:
+    Safe to repeat from every state it accepts:
       draft, publish_failed -> processing, then start the workflow
-      processing            -> start again: attaches to the run in flight (USE_EXISTING),
-                               or restarts one lost to an outage, healing a stuck job
+      processing            -> start a fresh run, replacing any in flight — which also
+                               heals a job whose run was lost to an outage
       published             -> nothing to do
 
     The status is committed *before* the workflow starts, so the workflow always finds
@@ -54,8 +54,8 @@ async def publish_job(session: AsyncSession, publisher: JobPublisher, job_id: uu
     if job.status is JobStatus.CLOSED:
         raise JobNotOpenError("A closed job cannot be published. Reopen it first.")
 
-    previous = job.status
-    if previous in (JobStatus.DRAFT, JobStatus.PUBLISH_FAILED):
+    previous_status, previous_error = job.status, job.publish_error
+    if previous_status in (JobStatus.DRAFT, JobStatus.PUBLISH_FAILED):
         job.status = JobStatus.PROCESSING
         job.publish_error = None
     # Always commit, even with nothing changed: it also releases the row lock. A
@@ -65,8 +65,17 @@ async def publish_job(session: AsyncSession, publisher: JobPublisher, job_id: uu
     try:
         await publisher.start(job.id)
     except WorkflowUnavailableError:
-        if previous is not JobStatus.PROCESSING:
-            job.status = previous
+        if previous_status is not JobStatus.PROCESSING:
+            # Undo only our own change, and only if it still stands: conditional on the
+            # job still being PROCESSING. A recruiter who closed the job in the meantime
+            # keeps their close. The previous failure reason comes back too — the 503
+            # says nothing was changed, so nothing should be.
+            await session.execute(
+                update(Job)
+                .where(Job.id == job.id, Job.status == JobStatus.PROCESSING)
+                .values(status=previous_status, publish_error=previous_error)
+                .execution_options(synchronize_session=False)
+            )
             await session.commit()
         raise
 
@@ -77,11 +86,12 @@ async def refresh_content(publisher: JobPublisher, job: Job) -> None:
     """Re-analyse a published job after its text changed. Best effort.
 
     The job stays PUBLISHED throughout — a typo fix must not take a live job offline —
-    and the edit has already been saved. If Temporal is down the content is stale until
-    the next edit, which content_processed_at < updated_at makes visible.
+    and the edit has already been saved. If Temporal is down, the analysis is not
+    refreshed until the next edit; the skipped refresh is logged as
+    content_refresh_skipped.
     """
     try:
-        await publisher.start(job.id, restart=True)
+        await publisher.start(job.id)
     except WorkflowUnavailableError:
         logger.warning("content_refresh_skipped job=%s reason=workflow_unavailable", job.id)
 
@@ -90,6 +100,9 @@ async def get_publication(
     session: AsyncSession, publisher: JobPublisher, job_id: uuid.UUID
 ) -> PublicationRead:
     job = await get_job(session, job_id)
+    # End the read transaction first: the pooled connection goes back to the pool
+    # instead of idling through a call to another system.
+    await session.commit()
     try:
         run = await publisher.describe(job.id)
     except WorkflowUnavailableError:

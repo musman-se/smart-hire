@@ -78,15 +78,22 @@ workflow). The console polls rather than waiting:
 |---|---|---|
 | A job (`useJob`) | every 1 s | when the status leaves `processing` |
 | Publishing status (`useJobPublication`) | every 1 s, for the live step | with the job |
-| A job's applications (`useJobApplications`) | every 1.5 s | when every active application has a score, or after 20 tries — a stopped worker must not mean polling forever |
+| A job's applications (`useJobApplications`) | every 1.5 s | when every active application created in the last minute has a score. Bounded per application, so a stopped worker never means polling forever; an older unscored one shows a "score" button instead |
 
 Polling, not WebSockets: the waits are seconds long, a handful of clients watch them, and
 polling needs nothing new on the server. Push becomes worth it with Module 3's events.
 
 **Idempotency keys.** Applying and creating a job send an `Idempotency-Key`.
-`useIdempotencyKey(input)` keeps the key stable while the form input is unchanged, so
-pressing Submit again after a timeout resends the same key and the backend replays its
-first answer instead of acting twice; any change to the input makes a new key.
+`useIdempotencyKey(input)` keeps the key stable while the input is unchanged *and no
+answer has come back*, so pressing Submit again after a timeout resends the same key and
+the backend replays its first answer instead of acting twice. Once the server answers —
+success or refusal — the key is renewed: reusing it after a refusal would replay that
+refusal for a day, even after its cause was fixed. Network errors and 5xx keep the key.
+Outside a secure context (plain HTTP from another machine) `crypto.randomUUID` does not
+exist, and the key is built from `crypto.getRandomValues` instead.
+
+**Stranded jobs.** A job that is `processing` while its workflow is not running — the run
+ended, or never started — shows *Restart publishing* in its publishing panel.
 
 **Temporal UI.** The publishing panel links each run to the Temporal UI at
 `VITE_TEMPORAL_UI_URL` (default `http://localhost:8233`), in the `default` namespace.

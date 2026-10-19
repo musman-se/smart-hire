@@ -57,7 +57,7 @@ all of them with their defaults. The backend reads the root `.env` and then
 | App | `APP_NAME`, `ENVIRONMENT`, `LOG_LEVEL` |
 | Rules | `MAX_APPLICATIONS_PER_CANDIDATE`, `DEFAULT_PAGE_SIZE`, `MAX_PAGE_SIZE` |
 | Temporal | `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` |
-| Workflows | `PUBLISHING_MAX_ATTEMPTS`, `PUBLISHING_FAULT_RATE`, `APPLICATION_PROCESSING_MAX_ATTEMPTS` |
+| Workflows | `PUBLISHING_MAX_ATTEMPTS`, `PUBLISHING_FAULT_RATE`, `APPLICATION_PROCESSING_MAX_ATTEMPTS`, `WORKER_SHUTDOWN_GRACE_SECONDS` |
 | Redis | `REDIS_URL`, `REDIS_TIMEOUT_SECONDS`, `IDEMPOTENCY_TTL_SECONDS`, `IDEMPOTENCY_LOCK_SECONDS` |
 | Tests | `TEST_DATABASE_NAME`, `TEST_REDIS_URL` |
 
@@ -163,7 +163,7 @@ request and in the `X-Request-ID` response header.
 | `not_found` | 404 | No such job, candidate, or application |
 | `duplicate_email` | 409 | Candidate email already registered |
 | `duplicate_application` | 409 | Candidate already applied to this job |
-| `job_not_open` | 409 | Job is draft or closed |
+| `job_not_open` | 409 | The job's state refuses it: applying to a job that is not `published`, editing one that is `processing` or `closed`, publishing a closed job, reopening one that is not closed |
 | `not_eligible` | 422 | Experience or skills do not meet the job's requirements |
 | `application_limit_reached` | 409 | Candidate is at their active application limit |
 | `job_capacity_reached` | 409 | Job hit its `max_applications` cap |
@@ -185,13 +185,15 @@ writes.
 least one of them.
 
 **Application limits.** A candidate may hold `MAX_APPLICATIONS_PER_CANDIDATE` (default 10)
-applications in non-terminal stages. `hired` and `rejected` do not count, so a rejected
-candidate is not locked out. A job may also set `max_applications` as its own cap.
+applications in non-terminal stages. `hired`, `rejected` and `withdrawn` do not count, so
+a rejected candidate is not locked out. A job may also set `max_applications` as its own
+cap. Both counts are taken under row locks, so they hold under concurrent requests.
 
 **Stage machine.** `applied → screening → interview → offer → hired`, with `rejected`
-reachable from any active stage. Both terminal stages are final. Skipping a stage is
-rejected, so the conversion funnel that later modules report describes what actually
-happened.
+(the recruiter's decision) and `withdrawn` (the candidate's) reachable from any active
+stage. All three terminal stages are final. Skipping a stage is rejected, so the
+conversion funnel that later modules report describes what actually happened. Every
+move is recorded in the application's history.
 
 ## Layout
 
@@ -228,8 +230,8 @@ docker compose up -d db     # the suite needs a real Postgres
 pytest
 ```
 
-103 tests. They run against a `smarthire_test` database, created on demand and dropped at
-the end; `test_migrations.py` replays the whole migration history against its own
+125 tests. They run against a `smarthire_test` database, created on demand, whose tables
+are dropped at the end; `test_migrations.py` replays the whole migration history against its own
 scratch database. Deliberately not SQLite: the unique constraint, array containment and native
 enums either behave differently there or do not exist, and a suite that passes on a
 database you do not deploy proves very little.

@@ -359,9 +359,7 @@ async def test_a_refused_transition_leaves_no_history(client: AsyncClient) -> No
     candidate = await make_candidate(client)
     application = (await apply(client, job, candidate)).json()
 
-    refused = await client.post(
-        f"/applications/{application['id']}/stage", json={"stage": "hired"}
-    )
+    refused = await client.post(f"/applications/{application['id']}/stage", json={"stage": "hired"})
 
     assert refused.status_code == 409
     history = (await client.get(f"/applications/{application['id']}/history")).json()

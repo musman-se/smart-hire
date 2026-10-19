@@ -25,7 +25,7 @@ answers `202 Accepted`.
 | Hand-written retry loops around every call | One retry policy per workflow, declared once |
 | Crash mid-way = lost work, inconsistent state | Crash mid-way = resume from the last completed step |
 | "Is it running? Did it fail? Why?" — grep logs | Every run, input, attempt and error browsable at http://localhost:8233 |
-| Two clicks start two runs | One workflow id per job: the second click attaches to the first run |
+| Two clicks start two runs | One workflow id per job: the second click replaces the first run, so only one ever runs |
 
 ### The vocabulary
 
@@ -64,7 +64,7 @@ sequenceDiagram
     participant W as Worker
     R->>API: POST /jobs/{id}/publish
     API->>DB: lock job · draft → processing · commit
-    API->>T: start PublishJob(id = publish-job-{id}, USE_EXISTING)
+    API->>T: start PublishJob(id = publish-job-{id}, TERMINATE_EXISTING)
     API-->>R: 202 · status processing
     T->>W: tasks
     par
@@ -86,7 +86,20 @@ sequenceDiagram
 | `mark_job_publish_failed` | `processing → publish_failed` + reason | Same compare-and-set |
 
 **Retries:** 1 s, 2 s, 4 s, 8 s ... capped at 20 s, up to `PUBLISHING_MAX_ATTEMPTS` (5)
-per activity. A deleted job raises a *non-retryable* error and fails at once.
+per activity. A deleted job raises a *non-retryable* error and fails at once. The
+compensation step, `mark_job_publish_failed`, is the exception: it retries **without
+limit** (backing off to a minute), because if it could give up, the job would stay
+`processing` with nothing running.
+
+**No execution timeout.** A run waiting for a worker should wait — that is the durability
+the workflow exists for. A workflow timeout would end it with no compensation, stranding
+the job; the activities' own timeouts bound the actual work.
+
+**The newest request wins.** Every start uses the `TERMINATE_EXISTING` conflict policy:
+a run already in flight is replaced. Attaching to it instead (`USE_EXISTING`) could let
+an old run — started for text since edited, or before a close and reopen — publish
+stale content. Nothing is lost by replacing a run: every step reads the job fresh and is
+idempotent.
 
 **The analysis itself** (`app/publishing/content.py`) is pure functions — strings in,
 data out — so it is deterministic, unit-tested in milliseconds, and explainable line by
@@ -95,8 +108,8 @@ line. Module 4 replaces spelling-matching with embeddings behind the same activi
 ### Updates
 
 Editing the title, description or required skills of a *published* job starts the same
-workflow with the `TERMINATE_EXISTING` conflict policy (`restart=True`): the newest
-edit wins, and the job **stays published** throughout. A job that is `processing` cannot be
+workflow, replacing any run in flight: the newest edit wins, and the job **stays
+published** throughout. A job that is `processing` cannot be
 edited — the workflow is reading that text.
 
 ## 4. ProcessApplication
@@ -139,12 +152,14 @@ Every row was tested, most of them against the real stack.
 | What fails | What happens | Where it is proven |
 |---|---|---|
 | An activity, transiently | Retried with backoff; the recruiter never sees it | `test_transient_failures_are_retried_until_they_succeed` |
-| An activity, every attempt | Compensation: job → `publish_failed` + reason; run marked Failed | `test_exhausted_retries_mark_the_job_failed`; live with `PUBLISHING_FAULT_RATE=1` |
-| The worker, mid-publish | Job waits in `processing`; a restarted worker resumes and finishes | Live: worker stopped, publish, worker started → published in ~4 s |
+| An activity, every attempt | Compensation: job → `publish_failed` + reason; run marked Failed — after the backoff waits, 1 + 2 + 4 + 8 = 15 s with 5 attempts | `test_exhausted_retries_mark_the_job_failed`; live with `PUBLISHING_FAULT_RATE=1` |
+| The worker, mid-publish | Job waits in `processing`; a restarted worker resumes and finishes | Live: worker stopped, publish, worker started → published within seconds |
 | Temporal, when publishing | Status change reverted; `503 workflow_unavailable`; nothing half-done | `test_engine_outage_changes_nothing` |
 | Temporal, when applying | Application still `201`; unscored; `POST /applications/{id}/process` recovers | `test_an_engine_outage_does_not_fail_the_application` |
 | A job closed mid-publish | Stays closed: the final step only leaves `processing` | `test_closing_mid_publish_is_not_undone_by_the_workflow` |
-| A double-clicked Publish | One run: the second start attaches (`USE_EXISTING`) | `test_publishing_a_processing_job_starts_again_rather_than_twice` |
+| A double-clicked Publish | One run: the second start replaces the first (`TERMINATE_EXISTING`) | `test_publishing_a_processing_job_starts_a_fresh_run` |
+| A job left `processing` with no run (ended or never started) | The console shows *Restart publishing*; publishing again starts a fresh run | Live: workflow terminated with the Temporal CLI, restarted from the console |
+| A recruiter closes the job while Temporal refuses the start | The revert is conditional: the close stands | `test_an_outage_revert_does_not_undo_a_concurrent_close` |
 | A retried apply / create | Original response replayed (Idempotency-Key, Redis) | `tests/test_idempotency.py` |
 | Redis | Requests run unprotected; database constraints still refuse duplicates | `test_redis_down_fails_open` |
 | The notification activity, twice | One row, one email | `test_workflow_scores_and_confirms_exactly_once` |
@@ -158,8 +173,9 @@ succeeded. SmartHire orders and compensates:
 1. Commit the status first, so the workflow always finds the job in `processing`.
 2. If the start fails, put the status back and answer 503.
 3. If the process dies between the two, the job is left in `processing` with nothing
-   running — and publishing it again restarts the workflow (`USE_EXISTING` finds no run
-   and starts one). The stuck state heals on the next click.
+   running. Publishing it again starts a fresh run, and the console offers exactly that:
+   a job that is `processing` while its workflow is not running shows *Restart
+   publishing*. The stuck state heals on the next click.
 
 The general solution is the **transactional outbox**: write the intent to a table in the
 same transaction, and have a relay deliver it. Module 3 brings it in with Kafka.
@@ -215,6 +231,10 @@ docker compose start worker     # ...and is published a few seconds later
 | `PUBLISHING_MAX_ATTEMPTS` | `5` | Attempts per publishing activity |
 | `PUBLISHING_FAULT_RATE` | `0` | Fraction of attempts failed on purpose (demo only) |
 | `APPLICATION_PROCESSING_MAX_ATTEMPTS` | `5` | Attempts per processing activity |
+| `WORKER_SHUTDOWN_GRACE_SECONDS` | `20` | After SIGTERM, how long running activities get to finish (Compose's `stop_grace_period` is 30 s) |
+
+Workers scale horizontally: `docker compose up -d --scale worker=3`. Verified live — six
+jobs published at once were spread two per worker.
 
 ## 9. Tests
 

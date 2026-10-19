@@ -380,16 +380,11 @@ export interface components {
              */
             candidate_id: string;
             stage: components["schemas"]["ApplicationStage"];
-            /**
-             * Note
-             * @description Why — kept in the application's history
-             */
-            note?: string | null;
             /** Cover Letter */
             cover_letter: string | null;
             /**
              * Match Score
-             * @description Populated by the scoring worker in a later module
+             * @description 0-100, computed by the ProcessApplication workflow moments after the application is created; null until then
              */
             match_score?: number | null;
             /**
@@ -1586,7 +1581,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Unprocessable Content */
             422: {
@@ -1611,7 +1608,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };
@@ -1899,14 +1898,18 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Candidate is not eligible for this job */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Internal Server Error */
             500: {
@@ -2602,7 +2605,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Unprocessable Content */
             422: {
@@ -2779,7 +2784,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };

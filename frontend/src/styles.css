@@ -525,6 +525,12 @@ td.actions {
 .health .dot.degraded {
   background: var(--warn);
 }
+.inline-error {
+  margin-left: 0.35rem;
+  color: var(--danger);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+}
 
 .tag {
   display: inline-block;

@@ -23,7 +23,7 @@ function NewJobForm({ onDone }: { onDone: () => void }) {
   });
   // A job has no natural unique key: without this, a double-submitted form or a retry
   // after a timeout creates the job twice.
-  const idempotencyKey = useIdempotencyKey(form);
+  const { key: idempotencyKey, settle } = useIdempotencyKey(form);
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -44,7 +44,10 @@ function NewJobForm({ onDone }: { onDone: () => void }) {
       max_applications: form.max_applications ? Number(form.max_applications) : null,
     };
 
-    createJob.mutate({ payload, idempotencyKey }, { onSuccess: onDone });
+    createJob.mutate(
+      { payload, idempotencyKey },
+      { onSettled: (_data, error) => settle(error), onSuccess: onDone },
+    );
   }
 
   return (
@@ -297,7 +300,8 @@ function JobRow({
   const transition = useJobTransition(job.id);
 
   return (
-    <tr>
+    <>
+      <tr>
       <td>
         <Link to={`/jobs/${job.id}`}>{job.title}</Link>
         <div className="muted" style={{ fontSize: "0.8rem" }}>
@@ -349,6 +353,16 @@ function JobRow({
           </button>
         </div>
       </td>
-    </tr>
+      </tr>
+      {transition.error && (
+        <tr>
+          <td colSpan={6}>
+            {/* A failed Publish or Retry — a 503 when the workflow engine is down —
+                must be visible here, not swallowed by the list. */}
+            <ErrorNotice error={transition.error} />
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

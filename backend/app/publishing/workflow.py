@@ -68,6 +68,37 @@ class PublishJobResult:
     skills: int
 
 
+# Exception types that mean "the database refused something". Their messages carry SQL
+# and constraint names: useful in the worker log and the Temporal UI, not to a recruiter.
+_DATABASE_ERRORS = frozenset(
+    {
+        "IntegrityError",
+        "DataError",
+        "ProgrammingError",
+        "OperationalError",
+        "DBAPIError",
+        "InterfaceError",
+        "InternalError",
+    }
+)
+
+
+def failure_reason(cause: BaseException | None) -> str:
+    """What the recruiter is told in publish_error, from the failed activity's cause.
+    Plain string work, so deterministic — safe inside a workflow."""
+    if isinstance(cause, ApplicationError):
+        if cause.type in _DATABASE_ERRORS:
+            return (
+                "The database refused the extracted content. The details are in the worker "
+                "log and the Temporal UI."
+            )
+        text = f"{cause.type}: {cause.message}" if cause.type else cause.message
+    else:
+        # A timeout, or a cancellation: the cause's class says which.
+        text = type(cause).__name__ if cause else "Unknown failure"
+    return text[:500]
+
+
 @workflow.defn(name="PublishJob")
 class PublishJobWorkflow:
     def __init__(self) -> None:
@@ -90,6 +121,19 @@ class PublishJobWorkflow:
                 maximum_attempts=data.max_attempts,
                 # Retrying cannot make a deleted job reappear.
                 non_retryable_error_types=[JOB_NOT_FOUND],
+            ),
+        }
+        # Compensation must not give up. If marking the job failed could exhaust its
+        # retries too, the job would stay PROCESSING with nothing running. It is one
+        # conditional UPDATE, so it is retried — with backoff, capped at a minute —
+        # until the database answers.
+        compensation_options = {
+            "start_to_close_timeout": timedelta(seconds=30),
+            "retry_policy": RetryPolicy(
+                initial_interval=timedelta(seconds=1),
+                backoff_coefficient=2.0,
+                maximum_interval=timedelta(seconds=60),
+                maximum_attempts=0,  # 0 = no limit
             ),
         }
         job_id = data.job_id
@@ -124,11 +168,11 @@ class PublishJobWorkflow:
             # move the job to PUBLISH_FAILED with the reason, so the recruiter can fix
             # and retry, instead of a job stuck in PROCESSING forever.
             self._step = "failed"
-            reason = str(err.cause) if err.cause else str(err)
+            reason = failure_reason(err.cause)
             await workflow.execute_activity_method(
                 PublishingActivities.mark_job_publish_failed,
                 MarkFailedInput(job_id=job_id, reason=reason),
-                **options,
+                **compensation_options,
             )
             # Fail the workflow itself too, so the run shows as Failed in the UI and in
             # the failed-workflows count — not as a success that quietly did nothing.

@@ -174,9 +174,9 @@ Authentication and authorisation. Every endpoint is currently unauthenticated â€
 |---|---|---|
 | FR-1.2 | `job_service.create_job` forces `JobStatus.DRAFT` | `test_client_cannot_create_an_already_published_job` |
 | FR-1.3 | `model_dump(exclude_unset=True)` in `update_job` | `test_patch_leaves_unsent_fields_alone` |
-| FR-1.4 | `POST /jobs/{id}/publish` in `routers/jobs.py` | `test_publish_sets_status_and_timestamp` |
+| FR-1.4 | `POST /jobs/{id}/publish` in `app/publishing/router.py` (was `routers/jobs.py`) | `test_publish_sets_status_and_timestamp` |
 | FR-1.5 | `JobNotOpenError` guard in `update_job` | `test_closed_job_cannot_be_edited` |
-| FR-1.6 | `_clean_skills` validator in `schemas/job.py` | `test_create_job_starts_as_draft` |
+| FR-1.6 | `normalise_skill_names` in `app/skills/schemas.py` | `test_create_job_starts_as_draft` |
 | FR-1.7 | `list_jobs` filters plus `Page[T]` | `test_list_filters_by_status_and_skill`, `test_pagination_reports_total_beyond_the_page` |
 | FR-1.8 | `ON DELETE CASCADE` on `applications.job_id` | `test_deleting_a_job_cascades_to_its_applications` |
 | FR-2.1 | `unique=True` on `candidates.email` | `test_duplicate_email_is_rejected` |
@@ -190,7 +190,7 @@ Authentication and authorisation. Every endpoint is currently unauthenticated â€
 | FR-3.7 | `job.max_applications` check | `test_job_capacity_is_enforced` |
 | FR-3.8 | `ALLOWED_TRANSITIONS` map | `test_legal_stage_progression`, `test_cannot_skip_straight_to_hired` |
 | FR-3.9 | Empty transition sets for terminal stages | `test_terminal_stage_cannot_be_left` |
-| FR-4.1 | `routers/health.py` | `test_liveness_returns_ok` |
+| FR-4.1 | `app/health.py` | `test_liveness_returns_ok` |
 | FR-4.2 | `register_exception_handlers` | `test_validation_error_uses_the_same_envelope` |
 | FR-4.3 | `RequestContextMiddleware` | `test_unknown_job_returns_structured_404` |
 | NFR-4 | `pagination_params` ceiling | `test_limit_above_the_ceiling_is_rejected` |
@@ -236,7 +236,7 @@ Design and failure analysis: [WORKFLOWS.md](WORKFLOWS.md). Decisions:
 | FR-5.4 | Failed steps are retried with exponential backoff, up to `PUBLISHING_MAX_ATTEMPTS` |
 | FR-5.5 | When retries are exhausted the job becomes `publish_failed` with the reason, and can be published again |
 | FR-5.6 | A partial failure leaves no partial content: content is replaced in one transaction |
-| FR-5.7 | Publishing an already-processing job never runs two workflows for it |
+| FR-5.7 | Publishing an already-processing job never runs two workflows for it, and restarts a job whose run was lost |
 | FR-5.8 | If the workflow engine is unreachable, publishing changes nothing and answers `503 workflow_unavailable` |
 | FR-5.9 | A processing job cannot be edited or applied to; a job closed mid-publish stays closed |
 | FR-5.10 | Editing a published job's title, description or required skills re-runs the analysis; the job stays published |
@@ -298,7 +298,7 @@ Design and failure analysis: [WORKFLOWS.md](WORKFLOWS.md). Decisions:
 | FR-5.4 | `RetryPolicy` in `PublishJobWorkflow` | `test_transient_failures_are_retried_until_they_succeed` |
 | FR-5.5 | `except ActivityError` â†’ `mark_job_publish_failed` | `test_exhausted_retries_mark_the_job_failed`, `test_a_failed_publish_is_recorded_and_can_be_retried` |
 | FR-5.6 | `store_job_content`: one transaction, replace-all | `test_storing_content_twice_leaves_one_copy` |
-| FR-5.7 | Workflow id per job + `USE_EXISTING` | `test_publishing_a_processing_job_starts_again_rather_than_twice` |
+| FR-5.7 | Workflow id per job + `TERMINATE_EXISTING`; console *Restart publishing* | `test_publishing_a_processing_job_starts_a_fresh_run` |
 | FR-5.8 | Revert in `publish_job`; `WorkflowUnavailableError` | `test_engine_outage_changes_nothing` |
 | FR-5.9 | Guard in `update_job`; status check in `apply_to_job`; CAS | `test_job_being_processed_cannot_be_edited_or_applied_to`, `test_closing_mid_publish_is_not_undone_by_the_workflow` |
 | FR-5.10 | `jobs/router.update_job` â†’ `refresh_content` (`TERMINATE_EXISTING`) | `test_editing_a_published_job_refreshes_its_content`, `test_editing_a_field_outside_the_content_does_not_refresh` |
@@ -308,7 +308,7 @@ Design and failure analysis: [WORKFLOWS.md](WORKFLOWS.md). Decisions:
 | FR-6.3 | `ProcessApplicationWorkflow`, `applications/scoring.py` | `test_applying_scores_the_application_and_confirms_it`, `test_scoring.py` |
 | FR-6.4 | `notifications.dedupe_key` + `ON CONFLICT DO NOTHING` | `test_workflow_scores_and_confirms_exactly_once`, `test_the_confirmation_is_sent_once_however_often_the_activity_runs` |
 | FR-6.5 | `start_processing` best effort; `POST /applications/{id}/process` | `test_an_engine_outage_does_not_fail_the_application` |
-| FR-6.6 | `core/idempotency.py` | `test_idempotency.py` (7 tests) |
+| FR-6.6 | `core/idempotency.py` | `test_idempotency.py` (8 tests) |
 | NFR-11 | Temporal history + stateless worker | Live: worker stopped mid-publish, restarted â†’ published |
-| NFR-13 | `health.py` readiness | `test_redis_down_fails_open`, `test_engine_outage_changes_nothing` |
+| NFR-13 | `health.py` readiness | `test_readiness_is_degraded_not_down_without_temporal_or_redis`, `test_readiness_is_503_whatever_the_database_raises`, `test_redis_down_fails_open` |
 

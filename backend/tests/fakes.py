@@ -23,12 +23,12 @@ class InlineJobPublisher:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self.activities = PublishingActivities(session_factory)
         self.available = True
-        self.starts: list[tuple[uuid.UUID, bool]] = []
+        self.starts: list[uuid.UUID] = []
 
-    async def start(self, job_id: uuid.UUID, *, restart: bool = False) -> None:
+    async def start(self, job_id: uuid.UUID) -> None:
         if not self.available:
             raise WorkflowUnavailableError()
-        self.starts.append((job_id, restart))
+        self.starts.append(job_id)
 
         job = str(job_id)
         try:

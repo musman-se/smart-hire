@@ -196,6 +196,10 @@ STOPWORDS = frozenset(
 
 _TOKEN = re.compile(r"[a-z][a-z0-9+#]*(?:[.\-][a-z0-9+#]+)*")
 
+# job_keywords.keyword is VARCHAR(64); job_keywords.score must be > 0.
+KEYWORD_MAX_LENGTH = 64
+MIN_KEYWORD_SCORE = 0.001
+
 
 @dataclass
 class Keyword:
@@ -209,11 +213,16 @@ def extract_keywords(title: str, description: str, *, limit: int = 12) -> list[K
     Term frequency with stopwords removed; a word in the title counts three times,
     because a title is the recruiter's own one-line summary. Scores are in (0, 1], the
     top term scoring 1.0. Ties sort alphabetically, so the output is deterministic.
+
+    Both limits of the job_keywords table are respected here, where they can be: a term
+    is cut to 64 characters *before* counting, so two long terms that share a prefix
+    merge instead of colliding on the (job_id, keyword) primary key; and a score never
+    rounds down to 0, which the score > 0 check would refuse.
     """
     counts: Counter[str] = Counter()
     for weight, text in ((3, title), (1, description)):
         for token in _TOKEN.findall(text.lower()):
-            token = token.strip(".-")
+            token = token.strip(".-")[:KEYWORD_MAX_LENGTH]
             if len(token) >= 3 and token not in STOPWORDS and not token.isdigit():
                 counts[token] += weight
 
@@ -221,7 +230,10 @@ def extract_keywords(title: str, description: str, *, limit: int = 12) -> list[K
         return []
     top = max(counts.values())
     ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
-    return [Keyword(keyword=word[:64], score=round(count / top, 3)) for word, count in ranked]
+    return [
+        Keyword(keyword=word, score=max(round(count / top, 3), MIN_KEYWORD_SCORE))
+        for word, count in ranked
+    ]
 
 
 # ----------------------------------------------------------------------------- skills
@@ -250,20 +262,72 @@ KNOWN_SKILLS = frozenset(
 AMBIGUOUS_SKILLS = frozenset({"go", "r", "c", "d", "less", "make", "spring", "rest", "express"})
 
 
+# Characters that may not touch a skill on either side. A match must not start right
+# after a letter or digit ("java" in "javascript"), nor end right before one, or before
+# "+" or "#" ("c" in "c++"). Anything else — space, "/", ".", ",", a bracket — is a
+# boundary, so "Python/Django", "HTML/CSS" and "React.js" each yield their skills.
+def _word_char(c: str) -> bool:
+    return "a" <= c <= "z" or "0" <= c <= "9"
+
+
+def _ends_word(c: str) -> bool:
+    return not (_word_char(c) or c in "+#")
+
+
+_SEP = "\x00sep"  # trie edge for "-" in a skill name: matches one whitespace or hyphen
+_END = "\x00end"  # trie key holding the skills whose spelling ends at this node
+
+
+def _build_trie(vocabulary: Iterable[str]) -> dict:
+    root: dict = {}
+    for skill in sorted(set(vocabulary)):  # sorted: the same result in every process
+        if not skill or skill in AMBIGUOUS_SKILLS:
+            continue
+        node = root
+        for ch in skill:
+            node = node.setdefault(_SEP if ch == "-" else ch, {})
+        node.setdefault(_END, []).append(skill)
+    return root
+
+
 def find_skills(text: str, vocabulary: Iterable[str]) -> dict[str, int]:
     """Skills from the vocabulary that the text mentions, with a mention count.
 
-    Matched as whole words or phrases, so "java" does not match "javascript", and
-    symbols in names ("c++", "node.js") are taken literally.
+    Matched as whole words or phrases, so "java" does not match "javascript"; symbols
+    in names ("c++", "node.js", ".net") are taken literally; a hyphen in a skill name
+    matches one space or hyphen, so "machine-learning" finds "machine learning".
+
+    The rules are exactly those of the first version, which ran one regular expression
+    per skill: (?<![a-z0-9])<skill>(?![a-z0-9+#]). That cost grew with vocabulary x
+    text. Now every spelling sits in one character trie, walked from each position in
+    the text that may start a match — one pass, however large the vocabulary. (A second
+    version split the text into words instead; it broke "Python/Django" and counted a
+    trailing skill several times. tests/test_content_analysis.py pins the rules down.)
     """
+    root = _build_trie(vocabulary)
+    if not root:
+        return {}
+
     lowered = text.lower()
+    n = len(lowered)
     found: dict[str, int] = {}
-    for skill in sorted(set(vocabulary)):
-        if skill in AMBIGUOUS_SKILLS or not skill:
+    resume_at: dict[str, int] = {}  # per skill, like re.findall: matches never overlap
+
+    for i in range(n):
+        if i > 0 and _word_char(lowered[i - 1]):
             continue
-        spelling = re.escape(skill).replace(r"\-", r"[\s-]")  # machine-learning ~ machine learning
-        pattern = rf"(?<![a-z0-9]){spelling}(?![a-z0-9+#])"
-        mentions = len(re.findall(pattern, lowered))
-        if mentions:
-            found[skill] = mentions
-    return found
+        stack = [(root, i)]
+        while stack:
+            node, j = stack.pop()
+            if _END in node and (j == n or _ends_word(lowered[j])):
+                for skill in node[_END]:
+                    if i >= resume_at.get(skill, 0):
+                        found[skill] = found.get(skill, 0) + 1
+                        resume_at[skill] = j
+            if j < n:
+                c = lowered[j]
+                if c in node:
+                    stack.append((node[c], j + 1))
+                if _SEP in node and (c == "-" or c.isspace()):
+                    stack.append((node[_SEP], j + 1))
+    return dict(sorted(found.items()))

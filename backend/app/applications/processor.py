@@ -40,9 +40,12 @@ class TemporalApplicationProcessor:
                 ),
                 id=workflow_id_for(application_id),
                 task_queue=settings.temporal_task_queue,
+                # Unlike publishing, attaching is right here: both steps read the
+                # application fresh and nothing about it can go stale mid-run.
                 id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
                 id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
-                execution_timeout=timedelta(minutes=10),
+                # No execution timeout: a run waits out a worker outage. See publisher.py.
+                rpc_timeout=timedelta(seconds=5),
             )
         except (RPCError, RuntimeError) as exc:
             logger.warning("process_start_failed application=%s error=%s", application_id, exc)

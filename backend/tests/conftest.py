@@ -1,7 +1,7 @@
 """Test fixtures.
 
 These tests run against a real PostgreSQL instance, in a separate `smarthire_test`
-database that is created on demand and dropped at the end.
+database that is created on demand; its tables are dropped at the end.
 
 Using the real database rather than SQLite is deliberate. The rules this suite exists to
 prove — the unique constraint on (job_id, candidate_id), array containment, native enum

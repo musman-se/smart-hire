@@ -21,7 +21,9 @@ def pagination_params(
         int,
         Query(ge=1, le=settings.max_page_size, description="Rows per page"),
     ] = settings.default_page_size,
-    offset: Annotated[int, Query(ge=0, description="Rows to skip")] = 0,
+    # Capped at the largest 32-bit integer: a larger offset overflowed in the driver and
+    # surfaced as a 500.
+    offset: Annotated[int, Query(ge=0, le=2_147_483_647, description="Rows to skip")] = 0,
 ) -> Pagination:
     """Offset pagination, with a ceiling on limit.
 

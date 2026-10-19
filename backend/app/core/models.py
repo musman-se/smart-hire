@@ -30,9 +30,7 @@ class Base(DeclarativeBase):
 # pg_trgm provides the trigram operator classes behind the title and name search indexes.
 # Migrations create it explicitly; this listener covers metadata.create_all(), which the
 # test suite uses, so the models stay self-sufficient.
-event.listen(
-    Base.metadata, "before_create", DDL("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-)
+event.listen(Base.metadata, "before_create", DDL("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
 
 
 class UUIDPrimaryKeyMixin:

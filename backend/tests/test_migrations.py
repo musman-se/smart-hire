@@ -196,3 +196,21 @@ def test_stage_history_is_backfilled_for_existing_applications(alembic_config: C
 
     rows = _query("SELECT from_stage::text, to_stage::text FROM application_stage_changes")
     assert rows == [(None, "INTERVIEW")]
+
+
+def test_a_long_legacy_skill_name_does_not_stop_the_upgrade(alembic_config: Config) -> None:
+    """Cutting a name to 64 characters can leave a trailing space, which the
+    ck_skills_name_normalised check refuses. b4f2d8e61a37 trims after it cuts."""
+    command.upgrade(alembic_config, "7c1e5b2a9d40")
+    long_name = "a" * 63 + " tail of a very long legacy skill"
+    _query(
+        f"""
+        INSERT INTO candidates (id, email, full_name, skills)
+        VALUES ('00000000-0000-0000-0000-000000000007', 'long@example.com', 'Long Name',
+                ARRAY['{long_name}'])
+        """
+    )
+
+    command.upgrade(alembic_config, "b4f2d8e61a37")
+
+    assert _query("SELECT name FROM skills") == [("a" * 63,)]

@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, status
 
 from app.core.db import SessionDep
+from app.core.schemas import ErrorResponse
 from app.jobs.schemas import JobRead
 from app.publishing import service as publishing_service
 from app.publishing.publisher import JobPublisherDep
@@ -24,8 +25,11 @@ router = APIRouter()
         "`publish_failed` with a reason. Follow progress at `/jobs/{job_id}/publication`."
     ),
     responses={
-        409: {"description": "The job is closed"},
-        503: {"description": "The workflow engine is unreachable; nothing was changed"},
+        409: {"model": ErrorResponse, "description": "The job is closed"},
+        503: {
+            "model": ErrorResponse,
+            "description": "The workflow engine is unreachable; nothing was changed",
+        },
     },
 )
 async def publish_job(

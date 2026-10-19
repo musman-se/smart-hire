@@ -23,6 +23,7 @@ from app.applications.schemas import (
 from app.core.db import SessionDep
 from app.core.idempotency import IdempotencyDep, IdempotencyKey
 from app.core.pagination import Page, PaginationDep
+from app.core.schemas import ErrorResponse
 from app.notifications import service as notification_service
 from app.notifications.schemas import NotificationRead
 
@@ -39,8 +40,11 @@ router = APIRouter()
     status_code=status.HTTP_201_CREATED,
     summary="Apply to a job",
     responses={
-        409: {"description": "Duplicate application, limit reached, or job not open"},
-        422: {"description": "Candidate is not eligible for this job"},
+        409: {
+            "model": ErrorResponse,
+            "description": "Duplicate application, limit reached, or job not open",
+        },
+        422: {"model": ErrorResponse, "description": "Candidate is not eligible for this job"},
     },
 )
 async def apply_to_job(
@@ -121,7 +125,7 @@ async def get_application(session: SessionDep, application_id: uuid.UUID) -> App
     "/{application_id}/stage",
     response_model=ApplicationRead,
     summary="Advance an application",
-    responses={409: {"description": "Illegal stage transition"}},
+    responses={409: {"model": ErrorResponse, "description": "Illegal stage transition"}},
 )
 async def advance_stage(
     session: SessionDep, application_id: uuid.UUID, payload: ApplicationStageUpdate
@@ -152,12 +156,15 @@ async def get_history(session: SessionDep, application_id: uuid.UUID) -> list[St
         "repeat: scoring is recomputed, and the confirmation is never sent twice. Use it "
         "to recover an application created while the workflow engine was down."
     ),
-    responses={503: {"description": "The workflow engine is unreachable"}},
+    responses={503: {"model": ErrorResponse, "description": "The workflow engine is unreachable"}},
 )
 async def process_application(
     session: SessionDep, processor: ApplicationProcessorDep, application_id: uuid.UUID
 ) -> ApplicationRead:
     application = await application_service.get_application(session, application_id)
+    # End the read transaction before calling Temporal: no pooled connection should
+    # idle through a call to another system.
+    await session.commit()
     await processor.start(application.id)
     return ApplicationRead.model_validate(application)
 
