@@ -1,9 +1,11 @@
 # SmartHire — Architecture and Design Decisions
 
-**Module 1: Foundation + Core Services** · 21 September 2026
+**Module 1: Foundation + Core Services** · 21 September 2026 · revised 18 October 2026
+after the Module 1 review
 
 This document covers the service breakdown, data and request flow, and — most of all —
-the decisions taken, the alternatives rejected, and why.
+the decisions taken, the alternatives rejected, and why. The database is covered in
+depth in [DATABASE.md](DATABASE.md), and schema migrations in [MIGRATIONS.md](MIGRATIONS.md).
 
 ---
 
@@ -33,20 +35,48 @@ Three services. `db` starts first and must report healthy; `migrate` then brings
 schema up to date and exits; only then does `api` start. The API can therefore never
 serve traffic against an outdated schema.
 
-## 2. Layers
+## 2. Packages and layers
+
+The backend is organised **by domain first, then by layer** — in the spirit of Django
+apps. Each domain package holds everything about one part of the business:
+
+```
+app/
+├── main.py              the app: middleware, error handlers, router table
+├── models.py            registry — imports every model for Alembic and the ORM
+├── health.py            liveness and readiness probes
+├── core/                cross-cutting, knows no domain
+│   ├── config.py        every setting, from environment variables
+│   ├── db.py            engine and session
+│   ├── models.py        Base, naming convention, id and timestamp mixins
+│   ├── errors.py        DomainError bases + the one error envelope
+│   ├── schemas.py       ReadModel, PatchModel, ErrorResponse
+│   ├── pagination.py    Pagination params and Page[T]
+│   └── logging.py       request-id logging
+├── jobs/                models · schemas · service · router · errors · enums
+├── candidates/          models · schemas · service · router · errors
+├── applications/        models · schemas · service · router · errors · enums
+└── skills/              models · schemas · service · router
+```
+
+Inside each package the same layers apply:
 
 | Layer | Knows about | Must not know about |
 |---|---|---|
-| `api/routers` | HTTP, status codes, query parameters | Business rules, SQL |
-| `services` | Business rules, the session, domain errors | HTTP, FastAPI, status codes |
-| `models` | Tables, columns, constraints | HTTP, Pydantic |
-| `schemas` | The API contract | Tables |
-| `core` | Config, engine, errors, logging | Domain rules |
+| `router.py` | HTTP, status codes, query parameters | Business rules, SQL |
+| `service.py` | Business rules, the session, domain errors | HTTP, FastAPI, status codes |
+| `models.py` | Tables, columns, constraints | HTTP, Pydantic |
+| `schemas.py` | The API contract | Tables |
+| `errors.py` | The ways this domain can refuse a request | HTTP beyond a status code |
+
+Dependencies point one way: `applications` uses `jobs` and `candidates`; neither of them
+imports `applications`. Everything may use `core`; `core` uses nothing.
 
 The rule that matters: **services raise `DomainError`, never `HTTPException`.** Each
-domain error carries a status code as an attribute, and one handler in `core/errors.py`
-turns it into a response. The payoff is direct — when Module 2 calls `apply_to_job` from
-a Temporal activity, there is no HTTP layer to strip out.
+domain declares its own errors (`jobs/errors.py`: `JobNotOpenError`, ...) on bases from
+`core/errors.py`, each carrying a status code, and one handler turns any of them into a
+response. The payoff is direct — when Module 2 calls a service from a Temporal activity,
+there is no HTTP layer to strip out.
 
 ### Request flow for an application
 
@@ -83,37 +113,15 @@ sequenceDiagram
 erDiagram
     JOBS ||--o{ APPLICATIONS : receives
     CANDIDATES ||--o{ APPLICATIONS : submits
-
-    JOBS {
-        uuid id PK
-        string title
-        text description
-        enum status "draft|published|closed"
-        enum employment_type
-        string_array required_skills "GIN indexed"
-        int min_experience_years
-        int max_applications "nullable"
-        timestamptz published_at "nullable"
-    }
-    CANDIDATES {
-        uuid id PK
-        string email UK "unique"
-        string full_name
-        int years_experience
-        string_array skills "GIN indexed"
-        string resume_url "nullable"
-    }
-    APPLICATIONS {
-        uuid id PK
-        uuid job_id FK
-        uuid candidate_id FK
-        enum stage "applied|screening|interview|offer|hired|rejected"
-        text cover_letter "nullable"
-        float match_score "nullable, later module"
-    }
+    JOBS ||--o{ JOB_SKILLS : requires
+    CANDIDATES ||--o{ CANDIDATE_SKILLS : has
+    SKILLS ||--o{ JOB_SKILLS : ""
+    SKILLS ||--o{ CANDIDATE_SKILLS : ""
 ```
 
-`applications` carries a unique constraint on `(job_id, candidate_id)`.
+Jobs, candidates and applications as in Module 1; skills normalised into a `skills`
+table with two join tables. Every column, constraint and index — and the reasoning — is
+in [DATABASE.md](DATABASE.md).
 
 ## 4. Design decisions
 
@@ -240,6 +248,53 @@ platform — a rule that punishes exactly the people who most need to keep apply
 brief says "application limits" without defining them; this reading is documented rather
 than assumed.
 
+### 4.11 Domain packages, not technical layers
+
+**Decision.** `app/jobs/`, `app/candidates/`, ... each holding their own models, schemas,
+service, router and errors. Adopted after the Module 1 review.
+
+**Alternative rejected.** The Module 1 layout: `models/`, `schemas/`, `services/`,
+`api/routers/`, each holding a file per domain.
+
+**Why.** A change to one feature touched four directories, and every domain's errors
+shared one file. Grouping by domain keeps a feature in one place, makes the dependency
+direction between domains visible in the imports, and gives Module 2's workflows an
+obvious home.
+
+**Tradeoff.** The model registry (`app/models.py`) must import every domain's models, or
+Alembic cannot see them. Forgetting one fails loudly in `alembic check`.
+
+### 4.12 Skills are rows, not arrays
+
+**Decision.** A `skills` table with `job_skills` and `candidate_skills` join tables.
+**Why.** First normal form, no update anomaly, a real vocabulary. Details and tradeoffs
+in [DATABASE.md §2](DATABASE.md#2-normalisation).
+
+### 4.13 Count-then-insert rules use row locks
+
+**Decision.** `apply_to_job` locks the job row, then the candidate row, before counting.
+
+**Alternative rejected.** Serializable isolation for the whole transaction, which would
+also prevent the race but turns every conflict into a retryable failure the client must
+handle.
+
+**Why.** "At most N rows" cannot be a unique constraint, and without a lock concurrent
+requests all count before any commits. A deterministic test reproduced a job capped at 1
+accepting 5. See [DATABASE.md §5](DATABASE.md#5-concurrency).
+
+**Tradeoff.** Applications to one job are serialised, for a few milliseconds each.
+
+### 4.14 Configuration comes only from the environment
+
+**Decision.** Every value that differs between environments — hosts, ports, credentials,
+pool sizes, business limits — is a field in `core/config.py`, read from an environment
+variable and validated at startup. One root `.env` feeds Compose and the backend alike;
+`.env.example` lists every variable.
+
+**Why.** The same image must run on a laptop, in CI and in production with nothing but
+different variables. A value hard-coded anywhere else is a value someone will forget to
+change.
+
 ## 5. What Module 1 does not do
 
 | Gap | Where it belongs |
@@ -251,6 +306,8 @@ than assumed.
 | Exact-string skill matching only | Module 4 — embeddings and semantic search |
 | Logs only; no metrics or traces | Module 3 — OpenTelemetry. The request id is the seam |
 | Offset pagination drifts under concurrent inserts | Keyset pagination when volume demands it |
+| ~~Unindexed search, redundant indexes~~ | Fixed after review — [DATABASE.md §4](DATABASE.md#4-indexes) |
+| ~~Count-then-insert race on application limits~~ | Fixed after review — row locks |
 | No rate limiting | Before any public exposure |
 
 The seams for these are already in place: the publishing transition is one function, the

@@ -8,12 +8,16 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.routers import applications, candidates, health, jobs
+from app import health
+from app.applications import router as applications
+from app.candidates import router as candidates
 from app.core.config import settings
 from app.core.db import engine
 from app.core.errors import register_exception_handlers
 from app.core.logging import RequestContextMiddleware, configure_logging
-from app.schemas.common import ErrorResponse
+from app.core.schemas import ErrorResponse
+from app.jobs import router as jobs
+from app.skills import router as skills
 
 configure_logging(settings.log_level)
 
@@ -51,3 +55,4 @@ app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 app.include_router(applications.job_applications_router, prefix="/jobs", tags=["applications"])
 app.include_router(candidates.router, prefix="/candidates", tags=["candidates"])
 app.include_router(applications.router, prefix="/applications", tags=["applications"])
+app.include_router(skills.router, prefix="/skills", tags=["skills"])

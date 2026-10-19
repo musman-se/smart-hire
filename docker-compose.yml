@@ -1,13 +1,39 @@
 # SmartHire — full local stack.
 #
 #   docker compose up --build     start Postgres, run migrations, serve API and web
+#   docker compose run --rm seed  load demo data into the running stack
 #   docker compose down           stop, keeping data
 #   docker compose down -v        stop and wipe the database volume
 #
 # Startup order is enforced, not hoped for: db must report healthy, then migrate must
-# exit 0, and only then does api start. web depends on api.
+# exit 0, and only then does api start. web and seed wait for api to report healthy.
+#
+# CONFIGURATION
+# Every value that differs between environments comes from the root .env file (copy
+# .env.example). Each ${VAR:-default} below falls back to the default when the variable
+# is unset, so the stack also starts with no .env at all.
 
 name: smarthire
+
+# Shared by every service that runs the backend image. env_file hands the whole .env to
+# the container, so the backend reads exactly the variables documented in .env.example;
+# `environment` then overrides only what must differ inside the Compose network.
+x-backend: &backend
+  build: ./backend
+  # One tag for every service that runs backend code, so migrate, api and (later)
+  # worker can never run different builds of the same source.
+  image: smarthire-backend
+  env_file:
+    - path: .env
+      required: false
+  environment: &backend-environment
+    ENVIRONMENT: docker
+    # Containers reach each other by service name. "localhost" inside a container means
+    # the container itself, so the host must be "db" here whatever .env says.
+    POSTGRES_HOST: db
+    # The port *inside* the Compose network is always 5432. DB_HOST_PORT only changes
+    # where the database is published on your machine.
+    POSTGRES_PORT: 5432
 
 services:
   db:
@@ -19,8 +45,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smarthire}
       POSTGRES_DB: ${POSTGRES_DB:-smarthire}
     ports:
-      # Exposed so the test suite and a GUI client can reach it from the host.
-      - "5432:5432"
+      # Published so the test suite and a GUI client can reach it from the host.
+      - "${DB_HOST_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -35,31 +61,31 @@ services:
   # deploy instead of leaving a half-migrated app serving, and it runs once rather than
   # once per API replica.
   migrate:
-    build: ./backend
+    <<: *backend
     container_name: smarthire-migrate
     command: alembic upgrade head
-    environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-smarthire}:${POSTGRES_PASSWORD:-smarthire}@db:5432/${POSTGRES_DB:-smarthire}
     depends_on:
       db:
         condition: service_healthy
     restart: "no"
 
   api:
-    build: ./backend
+    <<: *backend
     container_name: smarthire-api
     restart: unless-stopped
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    environment:
-      ENVIRONMENT: docker
-      # Host is "db", the service name — containers resolve each other by service name on
-      # the Compose network. "localhost" inside a container means the container itself.
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-smarthire}:${POSTGRES_PASSWORD:-smarthire}@db:5432/${POSTGRES_DB:-smarthire}
     ports:
-      - "8000:8000"
+      - "${API_HOST_PORT:-8000}:8000"
     volumes:
       # Bind mount so --reload picks up edits without a rebuild.
       - ./backend/app:/code/app
+    healthcheck:
+      # Readiness, not liveness: "healthy" should mean the API can reach its database.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
     depends_on:
       db:
         condition: service_healthy
@@ -72,10 +98,29 @@ services:
     build: ./frontend
     container_name: smarthire-web
     restart: unless-stopped
+    environment:
+      # Substituted into nginx.conf.template when the container starts.
+      API_UPSTREAM: ${API_UPSTREAM:-http://api:8000}
     ports:
-      - "3000:80"
+      - "${WEB_HOST_PORT:-3000}:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+
+  # Demo data, on demand: `docker compose run --rm seed`. The "tools" profile keeps it
+  # out of a plain `docker compose up`. It goes through the HTTP API like any client,
+  # so it needs no database access and no backend dependencies — only the stdlib.
+  seed:
+    image: python:3.13-slim
+    profiles: ["tools"]
+    command: python /scripts/seed.py
+    environment:
+      SMARTHIRE_API_URL: http://api:8000
+    volumes:
+      - ./scripts:/scripts:ro
+    depends_on:
+      api:
+        condition: service_healthy
 
 volumes:
   pgdata:

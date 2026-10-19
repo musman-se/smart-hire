@@ -4,6 +4,7 @@ These are the tests a reviewer will care about most: they are the requirements s
 word for word in the assignment.
 """
 
+import asyncio
 import uuid
 
 import pytest
@@ -11,7 +12,7 @@ from httpx import AsyncClient
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.application import Application
+from app.applications.models import Application
 from tests.factories import apply, make_candidate, make_job
 
 # --- Happy path ------------------------------------------------------------------
@@ -53,8 +54,8 @@ async def test_the_database_itself_refuses_a_duplicate(session: AsyncSession) ->
     guarantee comes from the unique constraint rather than from the Python pre-check.
     Two simultaneous requests can both pass that pre-check; neither can pass this.
     """
-    from app.models.candidate import Candidate
-    from app.models.job import Job
+    from app.candidates.models import Candidate
+    from app.jobs.models import Job
 
     job = Job(title="Race Condition Role", description="Testing the unique constraint.")
     candidate = Candidate(email=f"race-{uuid.uuid4().hex[:8]}@example.com", full_name="Racer")
@@ -264,3 +265,64 @@ async def test_deleting_a_job_cascades_to_its_applications(client: AsyncClient) 
     response = await client.get(f"/applications/{application['id']}")
 
     assert response.status_code == 404
+
+
+# --- Concurrency -----------------------------------------------------------------
+#
+# The two counting rules are check-then-insert: count the rows, then insert one. Run
+# concurrently, every request can count before any of them commits, and all of them pass.
+# These tests fire the requests at the same moment; each gets its own session and its
+# own connection, exactly as separate HTTP requests would.
+#
+# A race that depends on scheduling luck makes a test that proves nothing — it passes
+# whether or not the bug exists. `widen_race_window` makes the race certain: it pauses
+# each request just after it counts, so every request has counted before any inserts.
+# Without row locks both tests below fail every time; with them, both pass every time.
+
+
+@pytest.fixture
+def widen_race_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.applications import service
+
+    def delayed(count):
+        async def wrapper(*args, **kwargs):
+            result = await count(*args, **kwargs)
+            await asyncio.sleep(0.05)
+            return result
+
+        return wrapper
+
+    for name in ("_count_active_applications", "_count_job_applications"):
+        monkeypatch.setattr(service, name, delayed(getattr(service, name)))
+
+
+@pytest.mark.usefixtures("widen_race_window")
+async def test_job_capacity_holds_under_concurrent_applications(client: AsyncClient) -> None:
+    job = await make_job(client, max_applications=1, min_experience_years=0)
+    candidates = [await make_candidate(client) for _ in range(5)]
+
+    responses = await asyncio.gather(*(apply(client, job, c) for c in candidates))
+
+    statuses = sorted(r.status_code for r in responses)
+    assert statuses == [201, 409, 409, 409, 409]
+    assert (await client.get(f"/jobs/{job['id']}/applications")).json()["total"] == 1
+
+
+@pytest.mark.usefixtures("widen_race_window")
+async def test_candidate_limit_holds_under_concurrent_applications(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "max_applications_per_candidate", 2)
+    candidate = await make_candidate(client)
+    first = await make_job(client, title="Already Applied", min_experience_years=0)
+    assert (await apply(client, first, candidate)).status_code == 201
+
+    jobs = [await make_job(client, title=f"Race {i}", min_experience_years=0) for i in range(4)]
+    responses = await asyncio.gather(*(apply(client, job, candidate) for job in jobs))
+
+    # One slot was left, so exactly one of the four may take it.
+    assert sorted(r.status_code for r in responses) == [201, 409, 409, 409]
+    listed = await client.get("/applications", params={"candidate_id": candidate["id"]})
+    assert listed.json()["total"] == 2

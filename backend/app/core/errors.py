@@ -1,8 +1,12 @@
-"""Domain errors and the handlers that turn them into HTTP responses.
+"""The error base classes, and the handlers that turn them into HTTP responses.
 
-Services raise these. They know nothing about HTTP beyond carrying a status code, so the
-same service is callable from a Celery worker or a Temporal activity in later modules
-without dragging FastAPI along.
+Each domain package declares its own errors in its own `errors.py` — `JobNotOpenError`
+lives with jobs, `DuplicateApplicationError` with applications. This module holds only
+what they have in common: the base classes, and the single place where any of them
+becomes an HTTP response.
+
+Domain errors know nothing about HTTP beyond carrying a status code, so the same service
+is callable from a Temporal activity or a Celery worker without dragging FastAPI along.
 
 Every error leaves this API in one shape:
 
@@ -40,39 +44,18 @@ class NotFoundError(DomainError):
     code = "not_found"
 
 
-class DuplicateEmailError(DomainError):
+class ConflictError(DomainError):
+    """The request is valid, but the current state of the system refuses it."""
+
     status_code = status.HTTP_409_CONFLICT
-    code = "duplicate_email"
+    code = "conflict"
 
 
-class DuplicateApplicationError(DomainError):
-    status_code = status.HTTP_409_CONFLICT
-    code = "duplicate_application"
+class UnprocessableError(DomainError):
+    """The request is well-formed, but its content fails a business rule."""
 
-
-class JobNotOpenError(DomainError):
-    status_code = status.HTTP_409_CONFLICT
-    code = "job_not_open"
-
-
-class ApplicationLimitReachedError(DomainError):
-    status_code = status.HTTP_409_CONFLICT
-    code = "application_limit_reached"
-
-
-class JobCapacityReachedError(DomainError):
-    status_code = status.HTTP_409_CONFLICT
-    code = "job_capacity_reached"
-
-
-class NotEligibleError(DomainError):
     status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
-    code = "not_eligible"
-
-
-class InvalidStageTransitionError(DomainError):
-    status_code = status.HTTP_409_CONFLICT
-    code = "invalid_stage_transition"
+    code = "unprocessable"
 
 
 def _error_response(status_code: int, code: str, message: str) -> JSONResponse:

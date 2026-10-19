@@ -22,8 +22,9 @@ async def test_create_job_starts_as_draft(client: AsyncClient) -> None:
     job = response.json()
     assert job["status"] == "draft"
     assert job["published_at"] is None
-    # Skills are trimmed, lowercased and de-duplicated by the schema validator.
-    assert job["required_skills"] == ["python", "fastapi"]
+    # Skills are trimmed, lowercased and de-duplicated by the schema validator, and
+    # come back in alphabetical order — the order the skill_set relationship loads in.
+    assert job["required_skills"] == ["fastapi", "python"]
 
 
 async def test_client_cannot_create_an_already_published_job(client: AsyncClient) -> None:
@@ -125,6 +126,17 @@ async def test_pagination_reports_total_beyond_the_page(client: AsyncClient) -> 
 
 async def test_limit_above_the_ceiling_is_rejected(client: AsyncClient) -> None:
     response = await client.get("/jobs", params={"limit": 5000})
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
+async def test_patch_rejects_null_for_a_required_field(client: AsyncClient) -> None:
+    """Omitting a field leaves it alone; sending null for a NOT NULL column is an error
+    the API must catch — not one the database reports as a 500."""
+    job = await make_job(client, publish=False)
+
+    response = await client.patch(f"/jobs/{job['id']}", json={"title": None})
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"

@@ -27,6 +27,8 @@ FROM nginx:1.27-alpine
 
 # Fails with a clear error if dist/ is absent — run `npm run build` first.
 COPY dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Rendered to /etc/nginx/conf.d/default.conf at startup, with API_UPSTREAM substituted.
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+ENV API_UPSTREAM=http://api:8000
 
 EXPOSE 80
