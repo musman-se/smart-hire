@@ -84,7 +84,8 @@ async def main() -> None:
             loop.add_signal_handler(sig, stop.set)
 
     logger.info(
-        "worker_started task_queue=%s temporal=%s",
+        "worker_started environment=%s task_queue=%s temporal=%s",
+        settings.environment,
         settings.temporal_task_queue,
         settings.temporal_address,
     )

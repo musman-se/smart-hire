@@ -4,6 +4,7 @@ Uvicorn is pointed at the `app` object below: `uvicorn app.main:app`.
 FastAPI builds the ASGI application; Uvicorn is the ASGI server that runs it.
 """
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -23,6 +24,7 @@ from app.publishing import router as publishing
 from app.skills import router as skills
 
 configure_logging(settings.log_level)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -30,6 +32,7 @@ async def lifespan(_: FastAPI):
     # Startup happens before yield, shutdown after. Disposing the engine closes every
     # pooled connection — without it, reloads leak Postgres connections until it refuses
     # new ones.
+    logger.info("api_started environment=%s log_level=%s", settings.environment, settings.log_level)
     yield
     await engine.dispose()
     await close_temporal_client()

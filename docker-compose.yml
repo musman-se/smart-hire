@@ -11,7 +11,7 @@
 # CONFIGURATION
 # Every value that differs between environments comes from the root .env file (copy
 # .env.example). Each ${VAR:-default} below falls back to the default when the variable
-# is unset, so the stack also starts with no .env at all.
+# is unset. POSTGRES_PASSWORD is the exception: it has no default, so .env is required.
 
 name: smarthire
 
@@ -44,7 +44,9 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-smarthire}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smarthire}
+      # No fallback: the password comes from .env or nowhere. Compose stops with this
+      # message instead of starting a database with a password baked into this file.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set - run cp .env.example .env}
       POSTGRES_DB: ${POSTGRES_DB:-smarthire}
     ports:
       # Published so the test suite and a GUI client can reach it from the host.

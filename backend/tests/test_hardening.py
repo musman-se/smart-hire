@@ -262,3 +262,27 @@ def test_inconsistent_page_sizes_fail_at_startup() -> None:
 def test_a_redis_url_without_a_scheme_fails_at_startup() -> None:
     with pytest.raises(ValidationError, match="REDIS_URL"):
         Settings(_env_file=None, redis_url="localhost:6379")
+
+
+def test_production_refuses_injected_faults() -> None:
+    with pytest.raises(ValidationError, match="PUBLISHING_FAULT_RATE"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            postgres_password="a-real-secret",
+            publishing_fault_rate=0.3,
+        )
+
+
+def test_a_missing_database_password_fails_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The password has no default in code; it must come from the environment or .env.
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    with pytest.raises(ValidationError, match="POSTGRES_PASSWORD is not set"):
+        Settings(_env_file=None)
+
+
+def test_a_full_database_url_needs_no_separate_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    url = "postgresql+asyncpg://app:secret@db.internal:5432/smarthire"
+    assert Settings(_env_file=None, DATABASE_URL=url).database_url == url
