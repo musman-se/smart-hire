@@ -262,3 +262,28 @@ def test_inconsistent_page_sizes_fail_at_startup() -> None:
 def test_a_redis_url_without_a_scheme_fails_at_startup() -> None:
     with pytest.raises(ValidationError, match="REDIS_URL"):
         Settings(_env_file=None, redis_url="localhost:6379")
+
+
+def test_production_refuses_injected_faults() -> None:
+    with pytest.raises(ValidationError, match="PUBLISHING_FAULT_RATE"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            postgres_password="a-real-secret",
+            publishing_fault_rate=0.3,
+        )
+
+
+def test_production_refuses_the_development_database_password() -> None:
+    with pytest.raises(ValidationError, match="POSTGRES_PASSWORD"):
+        Settings(_env_file=None, environment="production", postgres_password="smarthire")
+
+
+def test_production_accepts_a_real_password_or_a_full_database_url() -> None:
+    Settings(_env_file=None, environment="production", postgres_password="a-real-secret")
+    Settings(
+        _env_file=None,
+        environment="production",
+        postgres_password="smarthire",
+        DATABASE_URL="postgresql+asyncpg://app:secret@db.internal:5432/smarthire",
+    )
