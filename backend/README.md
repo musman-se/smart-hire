@@ -50,6 +50,10 @@ Every setting is an environment variable, read and validated by
 all of them with their defaults. The backend reads the root `.env` and then
 `backend/.env` (personal overrides); real environment variables win over both.
 
+`POSTGRES_PASSWORD` is the one setting with no default in code: the backend and Compose
+both refuse to start without it (or, for the backend, a full `DATABASE_URL`). With
+`ENVIRONMENT=production`, the backend also refuses `PUBLISHING_FAULT_RATE` above 0.
+
 | Group | Variables |
 |---|---|
 | Database | `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` — or one `DATABASE_URL` |

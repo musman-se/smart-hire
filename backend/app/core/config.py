@@ -21,10 +21,6 @@ from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
-# The password docker-compose.yml and .env.example ship with. Fine on a laptop; refused
-# in production (see _check_consistency).
-_DEV_POSTGRES_PASSWORD = "smarthire"
-
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -38,7 +34,7 @@ class Settings(BaseSettings):
 
     # --- Application ---------------------------------------------------------------
     app_name: str = "SmartHire API"
-    # Where the process runs. "production" turns on the startup checks in
+    # Where the process runs. "production" turns on the stricter checks in
     # _check_consistency; every environment logs it at startup.
     environment: Literal["local", "docker", "test", "production"] = "local"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
@@ -51,7 +47,9 @@ class Settings(BaseSettings):
     postgres_host: str = "localhost"
     postgres_port: int = Field(default=5432, ge=1, le=65535)
     postgres_user: str = "smarthire"
-    postgres_password: SecretStr = SecretStr(_DEV_POSTGRES_PASSWORD)
+    # No default: a credential is never baked into the code. Required unless
+    # DATABASE_URL supplies the whole connection (see _check_consistency).
+    postgres_password: SecretStr | None = None
     postgres_db: str = "smarthire"
 
     # A full SQLAlchemy URL. When set it wins over the parts above — useful for a
@@ -137,19 +135,15 @@ class Settings(BaseSettings):
         for name in ("redis_url", "test_redis_url"):
             if not getattr(self, name).startswith(("redis://", "rediss://", "unix://")):
                 raise ValueError(f"{name.upper()} must start with redis://, rediss:// or unix://")
-        if self.environment == "production":
-            # Demo settings that are harmless locally and wrong in production. Failing
-            # here beats discovering them from failed publishes or a leaked default.
-            if self.publishing_fault_rate > 0:
-                raise ValueError("PUBLISHING_FAULT_RATE must be 0 when ENVIRONMENT=production")
-            if (
-                not self.database_url_override
-                and self.postgres_password.get_secret_value() == _DEV_POSTGRES_PASSWORD
-            ):
-                raise ValueError(
-                    "POSTGRES_PASSWORD is still the development default; "
-                    "set a real one when ENVIRONMENT=production"
-                )
+        if self.postgres_password is None and not self.database_url_override:
+            raise ValueError(
+                "POSTGRES_PASSWORD is not set. Copy .env.example to .env at the repository "
+                "root, or set POSTGRES_PASSWORD (or DATABASE_URL) in the environment"
+            )
+        # A demo setting that is harmless locally and wrong in production: failing here
+        # beats discovering it from publishes that fail on purpose.
+        if self.environment == "production" and self.publishing_fault_rate > 0:
+            raise ValueError("PUBLISHING_FAULT_RATE must be 0 when ENVIRONMENT=production")
         return self
 
     @cached_property
@@ -161,6 +155,7 @@ class Settings(BaseSettings):
         """
         if self.database_url_override:
             return self.database_url_override
+        assert self.postgres_password is not None  # enforced by _check_consistency
         return URL.create(
             drivername="postgresql+asyncpg",
             username=self.postgres_user,

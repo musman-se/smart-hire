@@ -274,16 +274,15 @@ def test_production_refuses_injected_faults() -> None:
         )
 
 
-def test_production_refuses_the_development_database_password() -> None:
-    with pytest.raises(ValidationError, match="POSTGRES_PASSWORD"):
-        Settings(_env_file=None, environment="production", postgres_password="smarthire")
+def test_a_missing_database_password_fails_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The password has no default in code; it must come from the environment or .env.
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    with pytest.raises(ValidationError, match="POSTGRES_PASSWORD is not set"):
+        Settings(_env_file=None)
 
 
-def test_production_accepts_a_real_password_or_a_full_database_url() -> None:
-    Settings(_env_file=None, environment="production", postgres_password="a-real-secret")
-    Settings(
-        _env_file=None,
-        environment="production",
-        postgres_password="smarthire",
-        DATABASE_URL="postgresql+asyncpg://app:secret@db.internal:5432/smarthire",
-    )
+def test_a_full_database_url_needs_no_separate_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    url = "postgresql+asyncpg://app:secret@db.internal:5432/smarthire"
+    assert Settings(_env_file=None, DATABASE_URL=url).database_url == url
