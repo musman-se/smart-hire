@@ -214,3 +214,27 @@ def test_a_long_legacy_skill_name_does_not_stop_the_upgrade(alembic_config: Conf
     command.upgrade(alembic_config, "b4f2d8e61a37")
 
     assert _query("SELECT name FROM skills") == [("a" * 63,)]
+
+
+def test_existing_candidates_get_an_account_that_cannot_sign_in(alembic_config: Config) -> None:
+    """d5e8a2f41c07 moves the email to users and makes candidates.id a foreign key to
+    users.id. Each existing candidate must come out with an account sharing its id — the
+    foreign key cannot be added otherwise — and with no password: nobody would know an
+    invented one."""
+    command.upgrade(alembic_config, "b7e3d05a9c12")
+    _query(
+        """
+        INSERT INTO candidates (id, email, full_name)
+        VALUES ('00000000-0000-0000-0000-000000000008', 'before.auth@example.com', 'Pre Auth')
+        """
+    )
+
+    command.upgrade(alembic_config, "d5e8a2f41c07")
+
+    assert _query("SELECT id::text, email, password_hash, role::text FROM users") == [
+        ("00000000-0000-0000-0000-000000000008", "before.auth@example.com", None, "CANDIDATE")
+    ]
+
+    command.downgrade(alembic_config, "b7e3d05a9c12")
+
+    assert _query("SELECT email FROM candidates") == [("before.auth@example.com",)]

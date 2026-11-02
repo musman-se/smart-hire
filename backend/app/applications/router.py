@@ -3,16 +3,23 @@
 Applying is nested under the job (POST /jobs/{job_id}/applications) because an
 application cannot exist without one — the URL says so. Reading and advancing use the
 flat /applications path, because by then the application has its own identity.
+
+Who may do what follows the people involved. A candidate applies, reads and withdraws
+their own applications. A recruiter reads every application, moves it through the
+pipeline and re-runs its processing — and cannot apply or withdraw on anyone's behalf.
 """
 
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.applications import service as application_service
 from app.applications.enums import ApplicationStage
+from app.applications.errors import ApplicationNotFoundError
+from app.applications.models import Application
 from app.applications.processor import ApplicationProcessorDep, start_processing
 from app.applications.schemas import (
     ApplicationCreate,
@@ -20,7 +27,11 @@ from app.applications.schemas import (
     ApplicationStageUpdate,
     StageChangeRead,
 )
+from app.auth.dependencies import CandidateDep, CurrentUserDep, require_recruiter
+from app.auth.enums import Role
+from app.auth.models import User
 from app.core.db import SessionDep
+from app.core.errors import ForbiddenError
 from app.core.idempotency import IdempotencyDep, IdempotencyKey
 from app.core.pagination import Page, PaginationDep
 from app.core.schemas import ErrorResponse
@@ -32,6 +43,17 @@ job_applications_router = APIRouter()
 
 # Flat, for applications addressed by their own id.
 router = APIRouter()
+
+recruiter_only = [Depends(require_recruiter)]
+
+
+async def _get_visible(session: AsyncSession, user: User, application_id: uuid.UUID) -> Application:
+    """The application, if this user may see it. A candidate asking for someone else's
+    gets the same 404 as for one that does not exist — see candidates.router._check_own."""
+    application = await application_service.get_application(session, application_id)
+    if user.role is Role.CANDIDATE and application.candidate_id != user.id:
+        raise ApplicationNotFoundError(application_id)
+    return application
 
 
 @job_applications_router.post(
@@ -49,6 +71,7 @@ router = APIRouter()
 )
 async def apply_to_job(
     session: SessionDep,
+    candidate: CandidateDep,
     idempotency: IdempotencyDep,
     processor: ApplicationProcessorDep,
     request: Request,
@@ -59,7 +82,7 @@ async def apply_to_job(
     # Duplicate prevention alone would answer a retried submission with 409 "already
     # applied". With an Idempotency-Key, the retry gets the original 201.
     async def apply() -> ApplicationRead:
-        application = await application_service.apply_to_job(session, job_id, payload)
+        application = await application_service.apply_to_job(session, job_id, candidate.id, payload)
         # Committed: the application is safe. Scoring and the confirmation message run
         # in the background; if the workflow engine is down they wait for a retry via
         # POST /applications/{id}/process — the candidate's 201 does not.
@@ -68,6 +91,9 @@ async def apply_to_job(
 
     return await idempotency.run(
         key=idempotency_key,
+        # Scoped to the candidate: two people who happen to send the same key are two
+        # different actions, and one must never be answered with the other's response.
+        owner=candidate.id,
         request=request,
         body=payload,
         status_code=status.HTTP_201_CREATED,
@@ -79,6 +105,7 @@ async def apply_to_job(
     "/{job_id}/applications",
     response_model=Page[ApplicationRead],
     summary="List applications for a job",
+    dependencies=recruiter_only,
 )
 async def list_job_applications(
     session: SessionDep,
@@ -96,14 +123,25 @@ async def list_job_applications(
     return Page[ApplicationRead].of(applications, total, pagination)
 
 
-@router.get("", response_model=Page[ApplicationRead], summary="List applications")
+@router.get(
+    "",
+    response_model=Page[ApplicationRead],
+    summary="List applications",
+    description="A candidate always gets their own; `candidate_id` may only name themselves.",
+)
 async def list_applications(
     session: SessionDep,
+    user: CurrentUserDep,
     pagination: PaginationDep,
     job_id: Annotated[uuid.UUID | None, Query()] = None,
     candidate_id: Annotated[uuid.UUID | None, Query()] = None,
     stage: Annotated[ApplicationStage | None, Query()] = None,
 ) -> Page[ApplicationRead]:
+    if user.role is Role.CANDIDATE:
+        if candidate_id not in (None, user.id):
+            raise ForbiddenError("A candidate can list only their own applications.")
+        candidate_id = user.id
+
     applications, total = await application_service.list_applications(
         session,
         limit=pagination.limit,
@@ -116,8 +154,10 @@ async def list_applications(
 
 
 @router.get("/{application_id}", response_model=ApplicationRead, summary="Get one application")
-async def get_application(session: SessionDep, application_id: uuid.UUID) -> ApplicationRead:
-    application = await application_service.get_application(session, application_id)
+async def get_application(
+    session: SessionDep, user: CurrentUserDep, application_id: uuid.UUID
+) -> ApplicationRead:
+    application = await _get_visible(session, user, application_id)
     return ApplicationRead.model_validate(application)
 
 
@@ -126,10 +166,15 @@ async def get_application(session: SessionDep, application_id: uuid.UUID) -> App
     response_model=ApplicationRead,
     summary="Advance an application",
     responses={409: {"model": ErrorResponse, "description": "Illegal stage transition"}},
+    dependencies=recruiter_only,
 )
 async def advance_stage(
     session: SessionDep, application_id: uuid.UUID, payload: ApplicationStageUpdate
 ) -> ApplicationRead:
+    if payload.stage is ApplicationStage.WITHDRAWN:
+        # Withdrawing is the candidate's decision (DELETE /applications/{id}); the
+        # recruiter's way to end an application is to reject it.
+        raise ForbiddenError("Only the candidate can withdraw an application. Reject it instead.")
     application = await application_service.advance_stage(
         session, application_id, payload.stage, payload.note
     )
@@ -141,7 +186,10 @@ async def advance_stage(
     response_model=list[StageChangeRead],
     summary="An application's stage history, oldest first",
 )
-async def get_history(session: SessionDep, application_id: uuid.UUID) -> list[StageChangeRead]:
+async def get_history(
+    session: SessionDep, user: CurrentUserDep, application_id: uuid.UUID
+) -> list[StageChangeRead]:
+    await _get_visible(session, user, application_id)
     changes = await application_service.get_history(session, application_id)
     return [StageChangeRead.model_validate(change) for change in changes]
 
@@ -157,6 +205,7 @@ async def get_history(session: SessionDep, application_id: uuid.UUID) -> list[St
         "to recover an application created while the workflow engine was down."
     ),
     responses={503: {"model": ErrorResponse, "description": "The workflow engine is unreachable"}},
+    dependencies=recruiter_only,
 )
 async def process_application(
     session: SessionDep, processor: ApplicationProcessorDep, application_id: uuid.UUID
@@ -175,9 +224,9 @@ async def process_application(
     summary="Messages sent about an application",
 )
 async def list_notifications(
-    session: SessionDep, application_id: uuid.UUID
+    session: SessionDep, user: CurrentUserDep, application_id: uuid.UUID
 ) -> list[NotificationRead]:
-    await application_service.get_application(session, application_id)
+    await _get_visible(session, user, application_id)
     notifications = await notification_service.list_for_application(session, application_id)
     return [NotificationRead.model_validate(n) for n in notifications]
 
@@ -185,11 +234,14 @@ async def list_notifications(
 @router.delete(
     "/{application_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Withdraw an application",
+    summary="Withdraw your application",
     description=(
         "Moves the application to the terminal `withdrawn` stage. Nothing is deleted: "
         "the application and its history remain readable."
     ),
 )
-async def withdraw_application(session: SessionDep, application_id: uuid.UUID) -> None:
+async def withdraw_application(
+    session: SessionDep, candidate: CandidateDep, application_id: uuid.UUID
+) -> None:
+    await _get_visible(session, candidate, application_id)
     await application_service.withdraw_application(session, application_id)

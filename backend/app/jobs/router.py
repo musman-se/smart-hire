@@ -1,35 +1,58 @@
 """Job endpoints.
 
 Routers stay thin: parse the request, call a service, shape the response. Every decision
-about what is allowed lives in app.jobs.service.
+about what is allowed lives in app.jobs.service — except *who* may ask, which is decided
+here, at the boundary: recruiters manage jobs; candidates read the published ones.
 """
 
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import JSONResponse
 
+from app.auth.dependencies import CurrentUserDep, RecruiterDep, require_recruiter
+from app.auth.enums import Role
 from app.core.db import SessionDep
 from app.core.idempotency import IdempotencyDep, IdempotencyKey
 from app.core.pagination import Page, PaginationDep
 from app.jobs import service as job_service
 from app.jobs.enums import JobStatus
+from app.jobs.errors import JobNotFoundError
 from app.jobs.schemas import JobCreate, JobRead, JobUpdate
 from app.publishing import service as publishing_service
 from app.publishing.publisher import JobPublisherDep
 
 router = APIRouter()
 
+# Drafts, jobs mid-publish, failed publishes and closed jobs are the recruiter's business.
+# A candidate sees a job only while it is open for applications.
+CANDIDATE_VISIBLE = JobStatus.PUBLISHED
 
-@router.get("", response_model=Page[JobRead], summary="List jobs")
+recruiter_only = [Depends(require_recruiter)]
+
+
+@router.get(
+    "",
+    response_model=Page[JobRead],
+    summary="List jobs",
+    description=(
+        "A candidate sees published jobs only; asking for any other `status` returns an empty page."
+    ),
+)
 async def list_jobs(
     session: SessionDep,
+    user: CurrentUserDep,
     pagination: PaginationDep,
     status_filter: Annotated[JobStatus | None, Query(alias="status")] = None,
     skill: Annotated[str | None, Query(description="Match one required skill")] = None,
     search: Annotated[str | None, Query(description="Case-insensitive title match")] = None,
 ) -> Page[JobRead]:
+    if user.role is Role.CANDIDATE:
+        if status_filter not in (None, CANDIDATE_VISIBLE):
+            return Page[JobRead].of([], 0, pagination)
+        status_filter = CANDIDATE_VISIBLE
+
     jobs, total = await job_service.list_jobs(
         session,
         limit=pagination.limit,
@@ -46,6 +69,7 @@ async def list_jobs(
 )
 async def create_job(
     session: SessionDep,
+    recruiter: RecruiterDep,
     idempotency: IdempotencyDep,
     request: Request,
     payload: JobCreate,
@@ -58,6 +82,7 @@ async def create_job(
 
     return await idempotency.run(
         key=idempotency_key,
+        owner=recruiter.id,
         request=request,
         body=payload,
         status_code=status.HTTP_201_CREATED,
@@ -66,12 +91,17 @@ async def create_job(
 
 
 @router.get("/{job_id}", response_model=JobRead, summary="Get one job")
-async def get_job(session: SessionDep, job_id: uuid.UUID) -> JobRead:
+async def get_job(session: SessionDep, user: CurrentUserDep, job_id: uuid.UUID) -> JobRead:
     job = await job_service.get_job(session, job_id)
+    # 404, not 403: to a candidate, an unpublished job does not exist yet.
+    if user.role is Role.CANDIDATE and job.status is not CANDIDATE_VISIBLE:
+        raise JobNotFoundError(job_id)
     return JobRead.model_validate(job)
 
 
-@router.patch("/{job_id}", response_model=JobRead, summary="Update a job")
+@router.patch(
+    "/{job_id}", response_model=JobRead, summary="Update a job", dependencies=recruiter_only
+)
 async def update_job(
     session: SessionDep, publisher: JobPublisherDep, job_id: uuid.UUID, payload: JobUpdate
 ) -> JobRead:
@@ -86,7 +116,12 @@ async def update_job(
     return JobRead.model_validate(job)
 
 
-@router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete a job")
+@router.delete(
+    "/{job_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a job",
+    dependencies=recruiter_only,
+)
 async def delete_job(session: SessionDep, job_id: uuid.UUID) -> None:
     await job_service.delete_job(session, job_id)
 
@@ -97,13 +132,20 @@ async def delete_job(session: SessionDep, job_id: uuid.UUID) -> None:
 # most side effects — lives in app/publishing/router.py.
 
 
-@router.post("/{job_id}/close", response_model=JobRead, summary="Close a job")
+@router.post(
+    "/{job_id}/close", response_model=JobRead, summary="Close a job", dependencies=recruiter_only
+)
 async def close_job(session: SessionDep, job_id: uuid.UUID) -> JobRead:
     job = await job_service.close_job(session, job_id)
     return JobRead.model_validate(job)
 
 
-@router.post("/{job_id}/reopen", response_model=JobRead, summary="Reopen a closed job")
+@router.post(
+    "/{job_id}/reopen",
+    response_model=JobRead,
+    summary="Reopen a closed job",
+    dependencies=recruiter_only,
+)
 async def reopen_job(session: SessionDep, job_id: uuid.UUID) -> JobRead:
     job = await job_service.reopen_job(session, job_id)
     return JobRead.model_validate(job)

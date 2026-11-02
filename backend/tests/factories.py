@@ -10,6 +10,9 @@ from typing import Any
 
 from httpx import AsyncClient
 
+# The password every test account is created with.
+TEST_PASSWORD = "correct-horse-battery"
+
 
 async def make_job(client: AsyncClient, *, publish: bool = True, **overrides: Any) -> dict:
     payload = {
@@ -35,21 +38,34 @@ async def make_job(client: AsyncClient, *, publish: bool = True, **overrides: An
 
 
 async def make_candidate(client: AsyncClient, **overrides: Any) -> dict:
+    """Register a candidate and sign them in, as a real candidate would.
+
+    Returns the profile, plus `auth`: the headers that make a request as this candidate,
+    e.g. `client.post(url, json=..., headers=candidate["auth"])`.
+    """
     payload = {
         # Unique per call so the email uniqueness constraint never fires by accident.
         "email": f"candidate-{uuid.uuid4().hex[:12]}@example.com",
         "full_name": "Ayesha Khan",
         "years_experience": 5,
         "skills": ["python", "fastapi", "postgresql"],
+        "password": TEST_PASSWORD,
     } | overrides
 
-    response = await client.post("/candidates", json=payload)
+    response = await client.post("/auth/register", json=payload)
     assert response.status_code == 201, response.text
-    return response.json()
+    candidate = response.json()
+
+    signed_in = await client.post(
+        "/auth/login", json={"email": payload["email"], "password": payload["password"]}
+    )
+    assert signed_in.status_code == 200, signed_in.text
+    token = signed_in.json()["access_token"]
+    return candidate | {"auth": {"Authorization": f"Bearer {token}"}}
 
 
 async def apply(client: AsyncClient, job: dict, candidate: dict, **body: Any):
+    """Apply as `candidate` — the applicant is whoever the token says, never the body."""
     return await client.post(
-        f"/jobs/{job['id']}/applications",
-        json={"candidate_id": candidate["id"], **body},
+        f"/jobs/{job['id']}/applications", json=body, headers=candidate["auth"]
     )

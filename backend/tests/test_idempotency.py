@@ -12,7 +12,7 @@ from redis.asyncio import Redis
 
 from app.core.idempotency import IdempotencyStore, get_idempotency_store
 from app.main import app
-from tests.factories import make_candidate, make_job
+from tests.factories import apply, make_candidate, make_job
 
 pytestmark = pytest.mark.usefixtures("redis_available")
 
@@ -24,8 +24,8 @@ def key() -> dict[str, str]:
 async def test_a_retried_application_gets_the_original_201(client: AsyncClient) -> None:
     job = await make_job(client)
     candidate = await make_candidate(client)
-    headers = key()
-    body = {"candidate_id": candidate["id"]}
+    headers = key() | candidate["auth"]
+    body = {"cover_letter": "Hello"}
 
     first = await client.post(f"/jobs/{job['id']}/applications", json=body, headers=headers)
     retry = await client.post(f"/jobs/{job['id']}/applications", json=body, headers=headers)
@@ -42,10 +42,9 @@ async def test_without_a_key_the_retry_is_refused_as_a_duplicate(client: AsyncCl
     first request succeeded that it failed."""
     job = await make_job(client)
     candidate = await make_candidate(client)
-    body = {"candidate_id": candidate["id"]}
 
-    await client.post(f"/jobs/{job['id']}/applications", json=body)
-    retry = await client.post(f"/jobs/{job['id']}/applications", json=body)
+    await apply(client, job, candidate)
+    retry = await apply(client, job, candidate)
 
     assert retry.status_code == 409
     assert retry.json()["error"]["code"] == "duplicate_application"
@@ -79,11 +78,10 @@ async def test_a_business_refusal_is_replayed_too(client: AsyncClient) -> None:
     """A 4xx is a real answer: the retry hears the same one, without re-running."""
     job = await make_job(client, publish=False)
     candidate = await make_candidate(client)
-    headers = key()
-    body = {"candidate_id": candidate["id"]}
+    headers = key() | candidate["auth"]
 
-    first = await client.post(f"/jobs/{job['id']}/applications", json=body, headers=headers)
-    retry = await client.post(f"/jobs/{job['id']}/applications", json=body, headers=headers)
+    first = await client.post(f"/jobs/{job['id']}/applications", json={}, headers=headers)
+    retry = await client.post(f"/jobs/{job['id']}/applications", json={}, headers=headers)
 
     assert first.status_code == retry.status_code == 409
     assert retry.json()["error"]["code"] == "job_not_open"
@@ -93,12 +91,11 @@ async def test_a_business_refusal_is_replayed_too(client: AsyncClient) -> None:
 async def test_concurrent_requests_with_one_key_run_the_action_once(client: AsyncClient) -> None:
     job = await make_job(client)
     candidate = await make_candidate(client)
-    headers = key()
-    body = {"candidate_id": candidate["id"]}
+    headers = key() | candidate["auth"]
 
     responses = await asyncio.gather(
         *(
-            client.post(f"/jobs/{job['id']}/applications", json=body, headers=headers)
+            client.post(f"/jobs/{job['id']}/applications", json={}, headers=headers)
             for _ in range(4)
         )
     )
@@ -108,6 +105,26 @@ async def test_concurrent_requests_with_one_key_run_the_action_once(client: Asyn
     codes = {r.json().get("error", {}).get("code") for r in responses if r.status_code == 409}
     assert codes <= {"idempotency_in_progress"}
     assert (await client.get(f"/jobs/{job['id']}/applications")).json()["total"] == 1
+
+
+async def test_one_key_sent_by_two_users_is_two_actions(client: AsyncClient) -> None:
+    """Records are stored per user. Unscoped, the second candidate's identical request
+    was answered with the first one's stored 201 — their application, not a new one."""
+    job = await make_job(client)
+    first, second = await make_candidate(client), await make_candidate(client)
+    shared = key()
+
+    mine = await client.post(
+        f"/jobs/{job['id']}/applications", json={}, headers=shared | first["auth"]
+    )
+    theirs = await client.post(
+        f"/jobs/{job['id']}/applications", json={}, headers=shared | second["auth"]
+    )
+
+    assert mine.status_code == theirs.status_code == 201
+    assert "Idempotent-Replayed" not in theirs.headers
+    assert theirs.json()["candidate_id"] == second["id"]
+    assert (await client.get(f"/jobs/{job['id']}/applications")).json()["total"] == 2
 
 
 async def test_redis_down_fails_open(client: AsyncClient) -> None:
@@ -144,12 +161,23 @@ async def test_a_server_side_failure_is_not_replayed(test_redis: Redis) -> None:
             raise WorkflowUnavailableError()
         return {"ok": True}
 
+    owner = uuid.uuid4()
     with pytest.raises(WorkflowUnavailableError):
         await store.run(
-            key="key-5xx-1", request=request, body=None, status_code=202, operation=flaky_dependency
+            key="key-5xx-1",
+            owner=owner,
+            request=request,
+            body=None,
+            status_code=202,
+            operation=flaky_dependency,
         )
     retry = await store.run(
-        key="key-5xx-1", request=request, body=None, status_code=202, operation=flaky_dependency
+        key="key-5xx-1",
+        owner=owner,
+        request=request,
+        body=None,
+        status_code=202,
+        operation=flaky_dependency,
     )
 
     assert calls == 2

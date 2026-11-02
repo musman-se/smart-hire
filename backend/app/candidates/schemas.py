@@ -3,15 +3,17 @@
 import uuid
 from datetime import datetime
 
-from pydantic import EmailStr, Field, field_validator
+from pydantic import EmailStr, Field, SecretStr, field_validator
 
+from app.auth.schemas import PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH
 from app.core.schemas import InputModel, PatchModel, ReadModel
 from app.skills.schemas import normalise_skill_names
 
 
 class CandidateBase(InputModel):
     # EmailStr validates the address on the way in, so the unique constraint never has
-    # to arbitrate between "bob@example.com" and "not an email".
+    # to arbitrate between "bob@example.com" and "not an email". It is the account's
+    # email: stored on users, read back through Candidate.email.
     email: EmailStr
     full_name: str = Field(min_length=2, max_length=160)
     phone: str | None = Field(default=None, max_length=32)
@@ -32,8 +34,14 @@ class CandidateBase(InputModel):
         return value.strip().lower()
 
 
-class CandidateCreate(CandidateBase):
-    pass
+class CandidateRegistration(CandidateBase):
+    """A new account and its profile, in one request (POST /auth/register)."""
+
+    password: SecretStr = Field(
+        min_length=PASSWORD_MIN_LENGTH,
+        max_length=PASSWORD_MAX_LENGTH,
+        description=f"{PASSWORD_MIN_LENGTH} to {PASSWORD_MAX_LENGTH} characters",
+    )
 
 
 class CandidateUpdate(PatchModel):

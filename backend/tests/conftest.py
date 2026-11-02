@@ -13,11 +13,14 @@ failing noisily.
 """
 
 import asyncio
-from collections.abc import AsyncGenerator
+import uuid
+from collections.abc import AsyncGenerator, Iterator
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from pwdlib import PasswordHash
+from pwdlib.hashers.argon2 import Argon2Hasher
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import text
@@ -25,12 +28,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from temporalio.client import Client
 
 from app.applications.processor import get_application_processor
+from app.auth import security
+from app.auth import service as auth_service
+from app.auth.models import User
+from app.auth.security import create_access_token
 from app.core.config import settings
 from app.core.db import get_session
 from app.core.idempotency import IdempotencyStore, get_idempotency_store
 from app.main import app
 from app.models import Base
 from app.publishing.publisher import get_job_publisher
+from tests.factories import TEST_PASSWORD
 from tests.fakes import InlineApplicationProcessor, InlineJobPublisher
 
 TEST_DB_NAME = settings.test_database_name
@@ -44,6 +52,20 @@ def _swap_database(url: str, name: str) -> str:
 
 TEST_DATABASE_URL = _swap_database(settings.database_url, TEST_DB_NAME)
 ADMIN_DATABASE_URL = _swap_database(settings.database_url, "postgres")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def fast_password_hashing() -> Iterator[None]:
+    """Argon2id with its real parameters costs about 0.1 s and 64 MiB per hash — by
+    design — and the suite registers and signs in hundreds of accounts. The same
+    algorithm with minimal cost keeps that to milliseconds. It changes the work factor
+    only: hashing and verifying run through exactly the same code."""
+    production = security.password_hasher
+    security.password_hasher = PasswordHash(
+        (Argon2Hasher(time_cost=1, memory_cost=1024, parallelism=1),)
+    )
+    yield
+    security.password_hasher = production
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -91,7 +113,7 @@ async def clean_tables(engine) -> AsyncGenerator[None]:
         await conn.execute(
             text(
                 "TRUNCATE applications, job_skills, candidate_skills, skills, "
-                "candidates, jobs CASCADE"
+                "candidates, jobs, refresh_tokens, users CASCADE"
             )
         )
     yield
@@ -158,13 +180,30 @@ async def redis_available(test_redis: Redis) -> None:
 
 
 @pytest_asyncio.fixture
+async def recruiter(engine) -> User:
+    """A recruiter account, created the way the CLI creates one."""
+    async with async_sessionmaker(engine, expire_on_commit=False)() as db_session:
+        return await auth_service.create_recruiter(
+            db_session, "recruiter@example.com", TEST_PASSWORD
+        )
+
+
+def bearer(user_id: uuid.UUID) -> dict[str, str]:
+    """Authorization headers for a user, minted directly rather than by signing in."""
+    return {"Authorization": f"Bearer {create_access_token(user_id)}"}
+
+
+@pytest_asyncio.fixture
 async def client(
     engine,
+    recruiter: User,
     publisher: InlineJobPublisher,
     processor: InlineApplicationProcessor,
     test_redis: Redis,
 ) -> AsyncGenerator[AsyncClient]:
-    """An HTTP client bound to the app, with its dependencies redirected.
+    """An HTTP client bound to the app, with its dependencies redirected, signed in as
+    a recruiter. A request that should run as a candidate passes that candidate's
+    headers (tests.factories.make_candidate returns them); `anonymous` sends none.
 
     dependency_overrides is FastAPI's seam for exactly this: the app is untouched, but
     every route that asks for a session gets one pointed at the test database, and every
@@ -184,7 +223,17 @@ async def client(
     )
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as async_client:
+    async with AsyncClient(
+        transport=transport, base_url="http://test", headers=bearer(recruiter.id)
+    ) as async_client:
         yield async_client
 
     app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def anonymous(client: AsyncClient) -> AsyncGenerator[AsyncClient]:
+    """The same app and overrides as `client` — they live on the app — with no
+    credentials."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as raw:
+        yield raw

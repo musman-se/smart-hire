@@ -68,6 +68,17 @@ class Settings(BaseSettings):
     # an idle one. -1 disables recycling.
     db_pool_recycle_seconds: int = -1
 
+    # --- Authentication --------------------------------------------------------------
+    # The key that signs access tokens. No default, like POSTGRES_PASSWORD: anyone who
+    # knows it can mint a token for any user, so it must never be in the code. At least
+    # 32 characters; generate one with
+    #   python -c "import secrets; print(secrets.token_urlsafe(48))"
+    jwt_secret_key: SecretStr | None = None
+    # An access token cannot be revoked before it expires, so it is kept short. The
+    # refresh token, which can be revoked, carries the session between them.
+    access_token_minutes: int = Field(default=15, ge=1, le=60)
+    refresh_token_days: int = Field(default=14, ge=1, le=90)
+
     # --- Temporal (workflow orchestration) ------------------------------------------
     # host:port of the Temporal server's gRPC frontend. Compose overrides it to
     # temporal:7233 inside its network.
@@ -140,6 +151,15 @@ class Settings(BaseSettings):
                 "POSTGRES_PASSWORD is not set. Copy .env.example to .env at the repository "
                 "root, or set POSTGRES_PASSWORD (or DATABASE_URL) in the environment"
             )
+        if self.jwt_secret_key is None:
+            raise ValueError(
+                "JWT_SECRET_KEY is not set. Copy .env.example to .env at the repository "
+                "root, or set JWT_SECRET_KEY in the environment"
+            )
+        # HS256 is only as strong as its key; a short one can be brute-forced offline from
+        # any token the attacker holds.
+        if len(self.jwt_secret_key.get_secret_value()) < 32:
+            raise ValueError("JWT_SECRET_KEY must be at least 32 characters")
         # A demo setting that is harmless locally and wrong in production: failing here
         # beats discovering it from publishes that fail on purpose.
         if self.environment == "production" and self.publishing_fault_rate > 0:

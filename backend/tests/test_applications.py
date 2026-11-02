@@ -56,11 +56,14 @@ async def test_the_database_itself_refuses_a_duplicate(session: AsyncSession) ->
     guarantee comes from the unique constraint rather than from the Python pre-check.
     Two simultaneous requests can both pass that pre-check; neither can pass this.
     """
+    from app.auth.enums import Role
+    from app.auth.models import User
     from app.candidates.models import Candidate
     from app.jobs.models import Job
 
     job = Job(title="Race Condition Role", description="Testing the unique constraint.")
-    candidate = Candidate(email=f"race-{uuid.uuid4().hex[:8]}@example.com", full_name="Racer")
+    user = User(email=f"race-{uuid.uuid4().hex[:8]}@example.com", role=Role.CANDIDATE)
+    candidate = Candidate(user=user, full_name="Racer")
     session.add_all([job, candidate])
     await session.commit()
 
@@ -371,7 +374,7 @@ async def test_withdrawing_keeps_the_application_and_its_history(client: AsyncCl
     candidate = await make_candidate(client)
     application = (await apply(client, job, candidate)).json()
 
-    response = await client.delete(f"/applications/{application['id']}")
+    response = await client.delete(f"/applications/{application['id']}", headers=candidate["auth"])
 
     assert response.status_code == 204
     kept = await client.get(f"/applications/{application['id']}")
@@ -393,7 +396,7 @@ async def test_withdrawing_frees_a_slot_but_not_the_same_job(
     second = await make_job(client, title="Second", min_experience_years=0)
     application = (await apply(client, first, candidate)).json()
 
-    await client.delete(f"/applications/{application['id']}")
+    await client.delete(f"/applications/{application['id']}", headers=candidate["auth"])
 
     again = await apply(client, first, candidate)
     assert again.status_code == 409  # withdrawal is final for that job
@@ -408,7 +411,7 @@ async def test_a_hired_application_cannot_be_withdrawn(client: AsyncClient) -> N
     for stage in ("screening", "interview", "offer", "hired"):
         await client.post(f"/applications/{application['id']}/stage", json={"stage": stage})
 
-    response = await client.delete(f"/applications/{application['id']}")
+    response = await client.delete(f"/applications/{application['id']}", headers=candidate["auth"])
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "invalid_stage_transition"

@@ -24,6 +24,11 @@ normally: the database constraints still refuse a duplicate application. The key
 upgrades "refused" to "the original answer"; it is never the only guard. That is why a
 Redis outage fails *open* — logs a warning and carries on — rather than refusing work.
 
+**Keys belong to a user.** The record is stored under the caller's id as well as the key,
+so two users who send the same key — by accident, or one guessing the other's — are two
+separate actions. Without that, the second would be answered with the first one's
+stored response: someone else's job, someone else's application.
+
 Only 2xx and 4xx responses are stored. A 4xx is a real answer and a retry would get
 the same one; a 5xx — including a DomainError that carries one, such as
 workflow_unavailable — or a crash releases the key, so the client may try again.
@@ -40,6 +45,7 @@ same transaction as the row it protects — the upgrade path if it ever matters.
 import hashlib
 import json
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 
@@ -101,16 +107,18 @@ class IdempotencyStore:
         self,
         *,
         key: str | None,
+        owner: uuid.UUID,
         request: Request,
         body: BaseModel | None,
         status_code: int,
         operation: Callable[[], Awaitable[Any]],
     ) -> JSONResponse:
-        """Run `operation` at most once per key, and answer every retry the same way."""
+        """Run `operation` at most once per key and owner — the signed-in user — and
+        answer every retry the same way."""
         if key is None:
             return self._respond(status_code, await operation())
 
-        redis_key = f"idempotency:{request.method}:{request.url.path}:{key}"
+        redis_key = f"idempotency:{owner}:{request.method}:{request.url.path}:{key}"
         fingerprint = _fingerprint(body)
 
         try:

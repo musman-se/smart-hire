@@ -1,0 +1,436 @@
+"""Authentication and authorisation.
+
+Who may call what is a rule like any other the API enforces, so it is tested the same
+way: through HTTP, against the real database. The matrix tests at the bottom are the
+ones to read first — each row is a sentence from the access rules.
+"""
+
+import re
+import uuid
+from datetime import UTC, datetime, timedelta
+
+import jwt
+import pytest
+from httpx import AsyncClient
+from pwdlib import PasswordHash
+from pwdlib.hashers.argon2 import Argon2Hasher
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.auth.cli import create_recruiter
+from app.auth.enums import Role
+from app.auth.models import RefreshToken, User
+from app.auth.security import create_access_token
+from app.core.config import settings
+from app.main import app
+from tests.factories import TEST_PASSWORD, apply, make_candidate, make_job
+
+
+async def sign_in(client: AsyncClient, email: str, password: str = TEST_PASSWORD):
+    return await client.post("/auth/login", json={"email": email, "password": password})
+
+
+def bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+# --- Registering and signing in -------------------------------------------------------
+
+
+async def test_a_registered_candidate_can_sign_in(anonymous: AsyncClient) -> None:
+    await make_candidate(anonymous, email="ayesha@example.com")
+
+    response = await sign_in(anonymous, "  Ayesha@Example.com ")
+
+    assert response.status_code == 200
+    tokens = response.json()
+    assert tokens["token_type"] == "bearer"
+    assert tokens["expires_in"] == settings.access_token_minutes * 60
+    me = await anonymous.get("/auth/me", headers=bearer(tokens["access_token"]))
+    assert me.json()["email"] == "ayesha@example.com"
+    assert me.json()["role"] == "candidate"
+
+
+async def test_a_wrong_password_and_an_unknown_email_get_the_same_answer(
+    anonymous: AsyncClient,
+) -> None:
+    """Different answers would let anyone test which emails have accounts."""
+    await make_candidate(anonymous, email="known@example.com")
+
+    wrong_password = await sign_in(anonymous, "known@example.com", "not-the-password")
+    unknown_email = await sign_in(anonymous, "nobody@example.com")
+
+    assert wrong_password.status_code == unknown_email.status_code == 401
+    assert wrong_password.json()["error"]["code"] == "invalid_credentials"
+    assert wrong_password.json()["error"]["message"] == unknown_email.json()["error"]["message"]
+
+
+async def test_an_account_without_a_password_cannot_sign_in(
+    anonymous: AsyncClient, session: AsyncSession
+) -> None:
+    """The candidates who registered before accounts existed got one with no password."""
+    session.add(User(email="legacy@example.com", role=Role.CANDIDATE, password_hash=None))
+    await session.commit()
+
+    response = await sign_in(anonymous, "legacy@example.com")
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "invalid_credentials"
+
+
+async def test_the_password_is_stored_as_an_argon2id_hash(
+    anonymous: AsyncClient, session: AsyncSession
+) -> None:
+    await make_candidate(anonymous, email="hashed@example.com")
+
+    stored = await session.scalar(select(User).where(User.email == "hashed@example.com"))
+
+    assert stored.password_hash.startswith("$argon2id$")
+    assert TEST_PASSWORD not in stored.password_hash
+
+
+async def test_a_short_password_is_refused(anonymous: AsyncClient) -> None:
+    response = await anonymous.post(
+        "/auth/register",
+        json={"email": "short@example.com", "full_name": "Short Pass", "password": "1234567"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["message"].startswith("password:")
+    assert "1234567" not in response.text
+
+
+async def test_a_weaker_hash_is_upgraded_at_sign_in(
+    anonymous: AsyncClient, session: AsyncSession
+) -> None:
+    """Raising the hashing cost later does not strand existing users: each hash is
+    replaced with a current one the next time its password is proved."""
+    weaker = PasswordHash((Argon2Hasher(time_cost=1, memory_cost=512, parallelism=1),))
+    old_hash = weaker.hash(TEST_PASSWORD)
+    session.add(User(email="old@example.com", role=Role.CANDIDATE, password_hash=old_hash))
+    await session.commit()
+
+    assert (await sign_in(anonymous, "old@example.com")).status_code == 200
+
+    session.expire_all()
+    stored = await session.scalar(select(User).where(User.email == "old@example.com"))
+    assert stored.password_hash != old_hash
+    assert (await sign_in(anonymous, "old@example.com")).status_code == 200
+
+
+# --- Access tokens --------------------------------------------------------------------
+
+
+async def test_no_token_is_401_with_a_bearer_challenge(anonymous: AsyncClient) -> None:
+    response = await anonymous.get("/jobs")
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "not_authenticated"
+    assert response.headers["WWW-Authenticate"] == "Bearer"
+
+
+def _forged(**overrides) -> str:
+    now = datetime.now(UTC)
+    claims = {"sub": str(uuid.uuid4()), "iat": now, "exp": now + timedelta(minutes=5)}
+    return jwt.encode(claims | overrides.pop("claims", {}), **overrides)
+
+
+@pytest.mark.parametrize(
+    "make_token",
+    [
+        lambda: "not-a-jwt",
+        lambda: create_access_token(uuid.uuid4(), now=datetime.now(UTC) - timedelta(hours=2)),
+        lambda: _forged(key="a-different-key-of-at-least-32-chars!", algorithm="HS256"),
+        lambda: _forged(key="", algorithm="none"),
+        lambda: _forged(key="k" * 32, algorithm="HS256", claims={"sub": "not-a-uuid"}),
+    ],
+    ids=["garbage", "expired", "wrong-key", "alg-none", "bad-subject"],
+)
+async def test_an_unusable_token_is_refused(anonymous: AsyncClient, make_token) -> None:
+    response = await anonymous.get("/jobs", headers=bearer(make_token()))
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "invalid_token"
+
+
+async def test_a_valid_token_for_a_user_who_no_longer_exists_is_refused(
+    anonymous: AsyncClient,
+) -> None:
+    response = await anonymous.get("/jobs", headers=bearer(create_access_token(uuid.uuid4())))
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "invalid_token"
+
+
+# --- Refresh tokens -------------------------------------------------------------------
+
+
+async def test_refreshing_rotates_the_refresh_token(anonymous: AsyncClient) -> None:
+    await make_candidate(anonymous, email="rotate@example.com")
+    first = (await sign_in(anonymous, "rotate@example.com")).json()
+
+    second = await anonymous.post("/auth/refresh", json={"refresh_token": first["refresh_token"]})
+
+    assert second.status_code == 200
+    assert second.json()["refresh_token"] != first["refresh_token"]
+    me = await anonymous.get("/auth/me", headers=bearer(second.json()["access_token"]))
+    assert me.status_code == 200
+
+
+async def test_reusing_a_refresh_token_revokes_every_session(anonymous: AsyncClient) -> None:
+    """The old token being presented again means it was copied. Both the thief's next
+    refresh and the owner's are refused; the owner signs in again."""
+    await make_candidate(anonymous, email="stolen@example.com")
+    stolen = (await sign_in(anonymous, "stolen@example.com")).json()["refresh_token"]
+    rotated = (await anonymous.post("/auth/refresh", json={"refresh_token": stolen})).json()
+
+    replay = await anonymous.post("/auth/refresh", json={"refresh_token": stolen})
+    owner = await anonymous.post("/auth/refresh", json={"refresh_token": rotated["refresh_token"]})
+
+    assert replay.status_code == owner.status_code == 401
+    assert owner.json()["error"]["code"] == "invalid_refresh_token"
+    assert (await sign_in(anonymous, "stolen@example.com")).status_code == 200
+
+
+async def test_an_expired_refresh_token_is_refused(
+    anonymous: AsyncClient, session: AsyncSession
+) -> None:
+    await make_candidate(anonymous, email="expired@example.com")
+    tokens = (await sign_in(anonymous, "expired@example.com")).json()
+    await session.execute(
+        update(RefreshToken).values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+    )
+    await session.commit()
+
+    response = await anonymous.post(
+        "/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
+    )
+
+    assert response.status_code == 401
+
+
+async def test_only_a_hash_of_the_refresh_token_is_stored(
+    anonymous: AsyncClient, session: AsyncSession
+) -> None:
+    await make_candidate(anonymous, email="hashonly@example.com")
+    raw = (await sign_in(anonymous, "hashonly@example.com")).json()["refresh_token"]
+
+    stored = list(await session.scalars(select(RefreshToken.token_hash)))
+
+    assert raw not in stored
+    assert all(len(token_hash) == 64 for token_hash in stored)
+
+
+async def test_signing_out_revokes_the_refresh_token(anonymous: AsyncClient) -> None:
+    await make_candidate(anonymous, email="bye@example.com")
+    tokens = (await sign_in(anonymous, "bye@example.com")).json()
+    body = {"refresh_token": tokens["refresh_token"]}
+
+    first = await anonymous.post("/auth/logout", json=body)
+    again = await anonymous.post("/auth/logout", json=body)
+    unknown = await anonymous.post("/auth/logout", json={"refresh_token": "never-issued"})
+
+    assert first.status_code == again.status_code == unknown.status_code == 204
+    assert (await anonymous.post("/auth/refresh", json=body)).status_code == 401
+
+
+# --- Secure by default ------------------------------------------------------------------
+
+PUBLIC_ROUTES = {
+    ("GET", "/health"),
+    ("GET", "/health/ready"),
+    ("POST", "/auth/register"),
+    ("POST", "/auth/login"),
+    ("POST", "/auth/refresh"),
+    ("POST", "/auth/logout"),
+}
+
+
+def _protected_routes() -> list[tuple[str, str]]:
+    """Every operation in the OpenAPI document, which is the app's own inventory of its
+    endpoints. (app.routes is not: since FastAPI 0.141 an included router appears there
+    as one lazy entry, so it listed none of them.)"""
+    return sorted(
+        (method.upper(), path)
+        for path, operations in app.openapi()["paths"].items()
+        for method in operations
+        if (method.upper(), path) not in PUBLIC_ROUTES
+    )
+
+
+PROTECTED_ROUTES = _protected_routes()
+
+
+def test_the_route_inventory_is_complete() -> None:
+    """An empty inventory would skip the test below and pass silently — it did once."""
+    assert ("POST", "/jobs") in PROTECTED_ROUTES
+    assert ("GET", "/applications/{application_id}/history") in PROTECTED_ROUTES
+    assert ("GET", "/auth/me") in PROTECTED_ROUTES
+
+
+@pytest.mark.parametrize(("method", "path"), PROTECTED_ROUTES)
+async def test_every_other_route_requires_a_token(
+    anonymous: AsyncClient, method: str, path: str
+) -> None:
+    """Fails for any new endpoint that answers without a token, unless it is added to
+    PUBLIC_ROUTES on purpose."""
+    url = path
+    for name in ("job_id", "candidate_id", "application_id"):
+        url = url.replace("{" + name + "}", str(uuid.uuid4()))
+
+    response = await anonymous.request(method, url, json={})
+
+    assert response.status_code == 401, f"{method} {path} answered {response.status_code}"
+
+
+# --- Who may do what --------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/jobs"),
+        ("PATCH", "/jobs/{job}"),
+        ("DELETE", "/jobs/{job}"),
+        ("POST", "/jobs/{job}/publish"),
+        ("POST", "/jobs/{job}/close"),
+        ("GET", "/jobs/{job}/publication"),
+        ("GET", "/jobs/{job}/applications"),
+        ("GET", "/candidates"),
+        ("POST", "/applications/{application}/stage"),
+        ("POST", "/applications/{application}/process"),
+    ],
+)
+async def test_a_candidate_cannot_do_a_recruiters_work(
+    client: AsyncClient, method: str, path: str
+) -> None:
+    job = await make_job(client)
+    candidate = await make_candidate(client)
+    application = (await apply(client, job, candidate)).json()
+    url = path.format(job=job["id"], application=application["id"])
+
+    response = await client.request(
+        method, url, json={"stage": "screening"}, headers=candidate["auth"]
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "forbidden"
+
+
+async def test_a_candidate_sees_only_published_jobs(client: AsyncClient) -> None:
+    published = await make_job(client, title="Open Role")
+    draft = await make_job(client, title="Draft Role", publish=False)
+    candidate = await make_candidate(client)
+
+    listed = await client.get("/jobs", headers=candidate["auth"])
+    asked_for_drafts = await client.get(
+        "/jobs", params={"status": "draft"}, headers=candidate["auth"]
+    )
+
+    assert [job["id"] for job in listed.json()["items"]] == [published["id"]]
+    assert asked_for_drafts.json()["total"] == 0
+    assert (await client.get(f"/jobs/{draft['id']}", headers=candidate["auth"])).status_code == 404
+    # The recruiter sees both.
+    assert (await client.get("/jobs")).json()["total"] == 2
+
+
+async def test_a_candidate_cannot_see_another_candidates_data(client: AsyncClient) -> None:
+    """Someone else's profile or application is a 404, exactly like one that does not
+    exist — a 403 would confirm the id is real."""
+    job = await make_job(client)
+    me, other = await make_candidate(client), await make_candidate(client)
+    theirs = (await apply(client, job, other)).json()
+
+    for url in (
+        f"/candidates/{other['id']}",
+        f"/applications/{theirs['id']}",
+        f"/applications/{theirs['id']}/history",
+        f"/applications/{theirs['id']}/notifications",
+    ):
+        response = await client.get(url, headers=me["auth"])
+        assert response.status_code == 404, url
+
+    edit = await client.patch(
+        f"/candidates/{other['id']}", json={"full_name": "Hijacked"}, headers=me["auth"]
+    )
+    withdraw = await client.delete(f"/applications/{theirs['id']}", headers=me["auth"])
+    assert edit.status_code == withdraw.status_code == 404
+    assert (await client.get(f"/candidates/{other['id']}")).json()["full_name"] != "Hijacked"
+
+
+async def test_a_candidate_lists_only_their_own_applications(client: AsyncClient) -> None:
+    job = await make_job(client)
+    me, other = await make_candidate(client), await make_candidate(client)
+    mine = (await apply(client, job, me)).json()
+    await apply(client, job, other)
+
+    listed = await client.get("/applications", headers=me["auth"])
+    asked_for_theirs = await client.get(
+        "/applications", params={"candidate_id": other["id"]}, headers=me["auth"]
+    )
+
+    assert [a["id"] for a in listed.json()["items"]] == [mine["id"]]
+    assert asked_for_theirs.status_code == 403
+    assert (await client.get(f"/candidates/{me['id']}", headers=me["auth"])).status_code == 200
+
+
+async def test_the_applicant_is_whoever_the_token_names(client: AsyncClient) -> None:
+    """A candidate_id in the body is ignored: it cannot be used to apply as someone else."""
+    job = await make_job(client)
+    me, other = await make_candidate(client), await make_candidate(client)
+
+    response = await apply(client, job, me, candidate_id=other["id"])
+
+    assert response.status_code == 201
+    assert response.json()["candidate_id"] == me["id"]
+
+
+async def test_a_recruiter_cannot_apply_or_withdraw(client: AsyncClient) -> None:
+    job = await make_job(client)
+    candidate = await make_candidate(client)
+    application = (await apply(client, job, candidate)).json()
+
+    applied = await client.post(f"/jobs/{job['id']}/applications", json={})
+    withdrawn = await client.delete(f"/applications/{application['id']}")
+    staged = await client.post(
+        f"/applications/{application['id']}/stage", json={"stage": "withdrawn"}
+    )
+
+    assert applied.status_code == withdrawn.status_code == staged.status_code == 403
+    assert (await client.get(f"/applications/{application['id']}")).json()["stage"] == "applied"
+
+
+# --- Recruiter accounts -------------------------------------------------------------------
+
+
+async def test_the_cli_creates_a_recruiter_who_can_sign_in(engine, anonymous: AsyncClient) -> None:
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    created = await create_recruiter(sessions, "  Lead@Example.com", TEST_PASSWORD, exist_ok=False)
+    repeated = await create_recruiter(sessions, "lead@example.com", "ignored-pw", exist_ok=True)
+
+    assert created.startswith("Created recruiter lead@example.com")
+    assert "already exists" in repeated
+    tokens = (await sign_in(anonymous, "lead@example.com")).json()
+    me = await anonymous.get("/auth/me", headers=bearer(tokens["access_token"]))
+    assert me.json()["role"] == "recruiter"
+
+
+@pytest.mark.parametrize(
+    ("email", "password", "message"),
+    [
+        ("taken@example.com", TEST_PASSWORD, "already exists (candidate)"),
+        ("not-an-email", TEST_PASSWORD, "Not a valid email"),
+        ("new@example.com", "short", "8 to 128 characters"),
+    ],
+    ids=["existing-candidate", "bad-email", "short-password"],
+)
+async def test_the_cli_refuses(
+    engine, client: AsyncClient, email: str, password: str, message: str
+) -> None:
+    """--exist-ok never promotes a candidate to recruiter, or resets anyone's password."""
+    await make_candidate(client, email="taken@example.com")
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    with pytest.raises(SystemExit, match=re.escape(message)):
+        await create_recruiter(sessions, email, password, exist_ok=True)

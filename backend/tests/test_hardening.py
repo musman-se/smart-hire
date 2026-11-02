@@ -205,7 +205,9 @@ async def test_an_absurd_offset_is_a_validation_error(client: AsyncClient) -> No
 # --- platform ------------------------------------------------------------------------------
 
 
-async def test_a_500_still_carries_its_request_id(engine, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_500_still_carries_its_request_id(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The middleware used to reset the id before Starlette built the 500 response, so
     the one error that most needs correlating carried request_id: null."""
     from app.jobs import service
@@ -215,7 +217,9 @@ async def test_a_500_still_carries_its_request_id(engine, monkeypatch: pytest.Mo
 
     monkeypatch.setattr(service, "list_jobs", explode)
     transport = ASGITransport(app=app, raise_app_exceptions=False)
-    async with AsyncClient(transport=transport, base_url="http://test") as raw:
+    async with AsyncClient(
+        transport=transport, base_url="http://test", headers=client.headers
+    ) as raw:
         response = await raw.get("/jobs", headers={"X-Request-ID": "trace-123"})
 
     assert response.status_code == 500
@@ -254,6 +258,10 @@ async def test_readiness_is_503_whatever_the_database_raises(engine) -> None:
     assert response.status_code == 503
 
 
+# A key that passes the length check, for Settings built without the .env file.
+JWT_KEY = "k" * 32
+
+
 def test_inconsistent_page_sizes_fail_at_startup() -> None:
     with pytest.raises(ValidationError, match="DEFAULT_PAGE_SIZE"):
         Settings(_env_file=None, default_page_size=500, max_page_size=100)
@@ -270,6 +278,7 @@ def test_production_refuses_injected_faults() -> None:
             _env_file=None,
             environment="production",
             postgres_password="a-real-secret",
+            jwt_secret_key=JWT_KEY,
             publishing_fault_rate=0.3,
         )
 
@@ -285,4 +294,16 @@ def test_a_missing_database_password_fails_at_startup(monkeypatch: pytest.Monkey
 def test_a_full_database_url_needs_no_separate_password(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
     url = "postgresql+asyncpg://app:secret@db.internal:5432/smarthire"
-    assert Settings(_env_file=None, DATABASE_URL=url).database_url == url
+    assert Settings(_env_file=None, DATABASE_URL=url, jwt_secret_key=JWT_KEY).database_url == url
+
+
+def test_a_missing_signing_key_fails_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Like the database password, the key that signs tokens has no default in code.
+    monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+    with pytest.raises(ValidationError, match="JWT_SECRET_KEY is not set"):
+        Settings(_env_file=None, postgres_password="a-real-secret")
+
+
+def test_a_short_signing_key_fails_at_startup() -> None:
+    with pytest.raises(ValidationError, match="at least 32 characters"):
+        Settings(_env_file=None, postgres_password="a-real-secret", jwt_secret_key="k" * 31)

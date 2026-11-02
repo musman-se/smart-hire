@@ -1,9 +1,12 @@
-"""Publishing endpoints, nested under the job they act on."""
+"""Publishing endpoints, nested under the job they act on. Recruiters only: publishing
+is how a job is prepared for candidates, and its status and extracted content describe
+the recruiter's pipeline, not the posting."""
 
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, status
 
+from app.auth.dependencies import require_recruiter
 from app.core.db import SessionDep
 from app.core.schemas import ErrorResponse
 from app.jobs.schemas import JobRead
@@ -11,7 +14,7 @@ from app.publishing import service as publishing_service
 from app.publishing.publisher import JobPublisherDep
 from app.publishing.schemas import JobContentRead, PublicationRead
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_recruiter)])
 
 
 @router.post(

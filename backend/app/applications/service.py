@@ -123,10 +123,10 @@ async def _count_job_applications(session: AsyncSession, job_id: uuid.UUID) -> i
 
 
 async def apply_to_job(
-    session: AsyncSession, job_id: uuid.UUID, payload: ApplicationCreate
+    session: AsyncSession, job_id: uuid.UUID, candidate_id: uuid.UUID, payload: ApplicationCreate
 ) -> Application:
     try:
-        return await _apply(session, job_id, payload)
+        return await _apply(session, job_id, candidate_id, payload)
     except DomainError:
         # A refusal ends the transaction at once. Otherwise the job and candidate row
         # locks taken below would be held while the caller stores the refusal (the
@@ -137,7 +137,7 @@ async def apply_to_job(
 
 
 async def _apply(
-    session: AsyncSession, job_id: uuid.UUID, payload: ApplicationCreate
+    session: AsyncSession, job_id: uuid.UUID, candidate_id: uuid.UUID, payload: ApplicationCreate
 ) -> Application:
     # Lock the job row, then the candidate row, until this transaction commits.
     #
@@ -158,7 +158,7 @@ async def _apply(
     # a few milliseconds, so a single job can still take hundreds per second; a job
     # without a cap could skip the job lock entirely if that ever matters.
     job = await get_job(session, job_id, lock=True)
-    candidate = await get_candidate(session, payload.candidate_id, lock=True)
+    candidate = await get_candidate(session, candidate_id, lock=True)
 
     # A draft job is not visible to candidates; a closed one is no longer accepting.
     if job.status is not JobStatus.PUBLISHED:
