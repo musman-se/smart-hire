@@ -8,11 +8,12 @@
  *
  * - **A reload keeps you signed in.** The new page finds the parked token and exchanges
  *   it for a fresh access token.
- * - **Two tabs never share a refresh token.** Each refresh token works once, and the
- *   server treats a second use as theft and ends every session the user has. "Duplicate
- *   tab" copies sessionStorage — but while a tab is open its sessionStorage holds no
- *   token, so the copy starts signed out instead of racing the original. localStorage,
- *   shared by every tab, would have that race on every refresh.
+ * - **Two tabs never share a refresh token.** Each refresh token works once; the server
+ *   refuses a second use, and a few seconds later treats it as theft and ends every
+ *   session the user has. "Duplicate tab" copies sessionStorage — but while a tab is
+ *   open its sessionStorage holds no token, so the copy starts signed out instead of
+ *   racing the original. localStorage, shared by every tab, would have that race on
+ *   every refresh.
  *
  * The tradeoff: a script injected into the page (XSS) could read the token from memory
  * or storage. React escapes everything it renders and this app never sets raw HTML,
@@ -27,6 +28,7 @@ const PARKED_KEY = "smarthire.refresh_token";
 let accessToken: string | null = null;
 let refreshToken: string | null = takeParkedToken();
 const signOutListeners = new Set<() => void>();
+const restoreListeners = new Set<() => void>();
 
 /** Read and delete in one step: once this tab holds the token, storage must not. */
 function takeParkedToken(): string | null {
@@ -65,8 +67,12 @@ window.addEventListener("pageshow", (event) => {
   const hadSession = accessToken !== null || refreshToken !== null;
   refreshToken = takeParkedToken();
   accessToken = null;
-  // The UI still shows whoever was signed in when the page was cached; tell it.
-  if (refreshToken === null && hadSession) signOutListeners.forEach((listener) => listener());
+  // The UI still shows whoever was signed in when the page was cached. Nothing parked:
+  // they are signed out. A token parked: it may be someone else's — a later page in
+  // this tab could have signed in as another user — so the session is re-established
+  // from it rather than assumed.
+  if (refreshToken !== null) restoreListeners.forEach((listener) => listener());
+  else if (hadSession) signOutListeners.forEach((listener) => listener());
 });
 
 export const session = {
@@ -89,5 +95,11 @@ export const session = {
   onSignedOut(listener: () => void): () => void {
     signOutListeners.add(listener);
     return () => signOutListeners.delete(listener);
+  },
+
+  /** The page came back from the back/forward cache holding a parked token. */
+  onRestored(listener: () => void): () => void {
+    restoreListeners.add(listener);
+    return () => restoreListeners.delete(listener);
   },
 };

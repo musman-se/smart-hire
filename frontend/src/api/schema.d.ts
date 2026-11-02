@@ -86,7 +86,7 @@ export interface paths {
         put?: never;
         /**
          * Exchange a refresh token for a new pair
-         * @description Each refresh token works once. Presenting one that was already used revokes every session of that user — it means the token was copied.
+         * @description Each refresh token works once. Presenting one that was used more than REFRESH_REUSE_GRACE_SECONDS ago ends every session of that user — it means the token was copied. Sooner than that, it is only refused.
          */
         post: operations["refresh_auth_refresh_post"];
         delete?: never;
@@ -157,7 +157,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get one job */
+        /**
+         * Get one job
+         * @description A candidate may read a published job, and a closed one they applied to — so their applications keep pointing somewhere.
+         */
         get: operations["get_job_jobs__job_id__get"];
         put?: never;
         post?: never;

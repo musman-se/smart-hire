@@ -437,9 +437,11 @@ token is opaque because nothing needs to read it except this table — a JWT wou
 add a second way to accept it.
 
 Only a *rotated* token counts as reuse, so `revoked_at` means exactly that. Signing out
-deletes the token's row, and so does ending every session — marked instead, each old
-device presenting its token later would look like a second theft and end the user's
-*new* sessions. An expired token is refused before the reuse check. Signing out with a
+deletes the token's row. Ending every session deletes *all* of the user's rows, rotated
+ones included: kept, the stolen token could be replayed — through refresh or sign-out,
+neither of which needs an access token — to end each session the owner started next.
+Issuing and ending a user's tokens both lock the user's row, so a refresh committing
+mid-way cannot slip a new token past the deletion. An expired token is refused before the reuse check. Signing out with a
 token someone else has already rotated is itself reuse, and ends every session — the
 thief's included.
 

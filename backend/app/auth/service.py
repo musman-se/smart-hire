@@ -76,18 +76,30 @@ async def login(session: AsyncSession, payload: LoginRequest) -> TokenPair:
     return await _issue_tokens(session, user)
 
 
-async def _end_every_session(session: AsyncSession, user_id: uuid.UUID) -> None:
-    """The response to a stolen refresh token: delete every live one the user has.
+async def _lock_user(session: AsyncSession, user_id: uuid.UUID) -> User | None:
+    """Serialise the token changes of one user. Every path that issues or ends a
+    user's refresh tokens takes this lock, after the lock on the token it was given —
+    one order everywhere, so no deadlock. Without it, a refresh committing while every
+    session was being ended could slip a new token past the DELETE.
 
-    Deleted, not marked: `revoked_at` must keep meaning "rotated". Marked, the tokens
-    ended here would later look like rotated ones, and each old device presenting its
-    token would end the user's *new* sessions all over again.
+    FOR NO KEY UPDATE, so it does not block inserting refresh_tokens rows, whose
+    foreign key takes a KEY SHARE lock on this same row.
     """
-    await session.execute(
-        delete(RefreshToken).where(
-            RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None)
-        )
+    return await session.get(
+        User, user_id, with_for_update={"key_share": True}, populate_existing=True
     )
+
+
+async def _end_every_session(session: AsyncSession, user_id: uuid.UUID) -> None:
+    """The response to a stolen refresh token: delete every refresh token the user has.
+
+    All of them, rotated ones included. Any token from before is then simply unknown:
+    the stolen one cannot be replayed to end the user's *next* sessions, and neither can
+    an old device's token. Marking them instead would keep each looking like a fresh
+    theft, every time it was presented.
+    """
+    await _lock_user(session, user_id)
+    await session.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
     await session.commit()
     logger.warning("refresh_token_reused user=%s — every session ended", user_id)
 
@@ -137,7 +149,7 @@ async def refresh(session: AsyncSession, raw_token: str) -> TokenPair:
         raise InvalidRefreshTokenError()
 
     stored.revoked_at = now
-    user = await session.get(User, stored.user_id)
+    user = await _lock_user(session, stored.user_id)
     # A user deleted while the token was live takes the token with it (ON DELETE
     # CASCADE), so the row above would not have been found. Checked anyway.
     if user is None:

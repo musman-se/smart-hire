@@ -272,7 +272,7 @@ docker compose up -d db     # the suite needs a real Postgres
 pytest
 ```
 
-202 tests. They run against a `smarthire_test` database, created on demand, whose tables
+215 tests. They run against a `smarthire_test` database, created on demand, whose tables
 are dropped at the end; `test_migrations.py` replays the whole migration history against its own
 scratch database. Deliberately not SQLite: the unique constraint, array containment and native
 enums either behave differently there or do not exist, and a suite that passes on a

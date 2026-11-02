@@ -250,6 +250,25 @@ async def test_old_devices_cannot_end_the_sessions_signed_in_after_a_theft(
     ).status_code == 200
 
 
+async def test_a_stolen_token_cannot_end_the_owners_next_session_too(
+    anonymous: AsyncClient, session: AsyncSession
+) -> None:
+    """Ending every session deletes all the user's tokens, the stolen one included.
+    Kept, it could be replayed — through refresh or logout, neither of which needs an
+    access token — to end each session the owner started afterwards."""
+    await make_candidate(anonymous, email="replay@example.com")
+    stolen = (await sign_in(anonymous, "replay@example.com")).json()["refresh_token"]
+    await anonymous.post("/auth/refresh", json={"refresh_token": stolen})  # the thief
+    await _age_rotations(session)
+    await anonymous.post("/auth/refresh", json={"refresh_token": stolen})  # every session ends
+
+    fresh = (await sign_in(anonymous, "replay@example.com")).json()["refresh_token"]
+    await anonymous.post("/auth/refresh", json={"refresh_token": stolen})
+    await anonymous.post("/auth/logout", json={"refresh_token": stolen})
+
+    assert (await anonymous.post("/auth/refresh", json={"refresh_token": fresh})).status_code == 200
+
+
 async def test_signing_out_with_a_token_someone_else_rotated_ends_every_session(
     anonymous: AsyncClient, session: AsyncSession
 ) -> None:
@@ -322,10 +341,15 @@ async def test_an_expired_rotated_token_does_not_end_other_sessions(
     old = (await sign_in(anonymous, "oldtoken@example.com")).json()["refresh_token"]
     await anonymous.post("/auth/refresh", json={"refresh_token": old})  # rotated
     other = (await sign_in(anonymous, "oldtoken@example.com")).json()["refresh_token"]
+    # Rotated long ago *and* expired: outside the grace window, so only the expiry can be
+    # what spares the other session.
     await session.execute(
         update(RefreshToken)
         .where(RefreshToken.revoked_at.is_not(None))
-        .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        .values(
+            revoked_at=datetime.now(UTC) - timedelta(minutes=5),
+            expires_at=datetime.now(UTC) - timedelta(seconds=1),
+        )
     )
     await session.commit()
 

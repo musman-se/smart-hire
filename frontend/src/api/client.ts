@@ -80,35 +80,54 @@ export type RefreshOutcome = "renewed" | "refused" | "unavailable";
 let refreshing: Promise<RefreshOutcome> | null = null;
 
 /**
+ * Waits before trying again when a refresh got no answer — all well inside the server's
+ * REFRESH_REUSE_GRACE_SECONDS (10). An unanswered attempt may still have rotated the
+ * token on the server. Presented again this soon, it is merely refused (signed out
+ * here); presented after the window — a user pressing "Try again" a minute later — the
+ * server would take it for theft and end every session the user has.
+ */
+const RETRY_DELAYS_MS = [1000, 3000];
+
+async function attemptRefresh(refreshToken: string): Promise<RefreshOutcome> {
+  let tokens: TokenPair;
+  try {
+    const response = await fetch(`${BASE_URL}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (response.status === 401) {
+      session.clear();
+      return "refused";
+    }
+    if (!response.ok) return "unavailable"; // a 502 mid-deploy: no answer about the token
+    tokens = (await response.json()) as TokenPair;
+  } catch {
+    // The network, the API down, or a body that never arrived whole.
+    return "unavailable";
+  }
+  session.store(tokens);
+  return "renewed";
+}
+
+/**
  * Exchange the refresh token for a new pair. Single-flight: when several requests find
  * the access token expired at once, they all wait on one exchange. Each would otherwise
- * present the same refresh token, and the server — seeing a used token presented again
- * — would treat it as stolen and end the session.
+ * present the same refresh token, and the server would refuse all but the first — or,
+ * after a few seconds, treat the repeat as theft and end every session.
  */
 export function refreshSession(): Promise<RefreshOutcome> {
   refreshing ??= (async (): Promise<RefreshOutcome> => {
     const refreshToken = session.refreshToken();
     if (!refreshToken) return "refused";
 
-    let response: Response;
-    try {
-      response = await fetch(`${BASE_URL}/auth/refresh`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: refreshToken }),
-      });
-    } catch {
-      return "unavailable"; // no answer at all — the network, or the API is down
+    let outcome = await attemptRefresh(refreshToken);
+    for (const delay of RETRY_DELAYS_MS) {
+      if (outcome !== "unavailable") break;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      outcome = await attemptRefresh(refreshToken);
     }
-    if (response.ok) {
-      session.store((await response.json()) as TokenPair);
-      return "renewed";
-    }
-    if (response.status === 401) {
-      session.clear();
-      return "refused";
-    }
-    return "unavailable";
+    return outcome;
   })().finally(() => {
     refreshing = null;
   });

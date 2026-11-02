@@ -57,18 +57,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const settle = (next: AuthState) => {
       if (!cancelled) setState(next);
     };
-    void refreshSession().then(async (outcome) => {
-      if (outcome === "refused") return settle({ status: "signed-out", keepPlace: true });
-      if (outcome === "unavailable") return settle({ status: "unavailable" });
-      try {
-        settle({ status: "signed-in", user: await authApi.me() });
-      } catch (error) {
-        // A 401 here has already signed out, through client.ts; anything else is the
-        // API failing to answer.
-        const refused = error instanceof ApiError && error.status === 401;
-        settle(refused ? { status: "signed-out", keepPlace: true } : { status: "unavailable" });
-      }
-    });
+    refreshSession()
+      .then(async (outcome) => {
+        if (outcome === "refused") return settle({ status: "signed-out", keepPlace: true });
+        if (outcome === "unavailable") return settle({ status: "unavailable" });
+        try {
+          settle({ status: "signed-in", user: await authApi.me() });
+        } catch (error) {
+          // A 401 here has already signed out, through client.ts; anything else is the
+          // API failing to answer.
+          const refused = error instanceof ApiError && error.status === 401;
+          settle(refused ? { status: "signed-out", keepPlace: true } : { status: "unavailable" });
+        }
+      })
+      // Never left on "Signing you in…" with no way out.
+      .catch(() => settle({ status: "unavailable" }));
     return () => {
       cancelled = true;
     };
@@ -84,6 +87,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session.onSignedOut(() => {
         queryClient.clear();
         setState({ status: "signed-out", keepPlace: true });
+      }),
+    [queryClient],
+  );
+
+  // Back from the back/forward cache with a parked token, which may belong to someone
+  // other than the user this page last showed: start again from the token, with an
+  // empty cache, exactly as a fresh page load would.
+  useEffect(
+    () =>
+      session.onRestored(() => {
+        queryClient.clear();
+        setState({ status: "loading" });
       }),
     [queryClient],
   );

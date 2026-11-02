@@ -178,15 +178,19 @@ withdraws their own applications under *My applications*. The role only decides 
 **Where the refresh token lives.** In memory while the tab is open. On `pagehide` it is
 parked in sessionStorage, and the next page load takes it back out and deletes it — so
 a reload keeps you signed in. The care is about two tabs: each refresh token works
-once, and the server treats a second use as theft and ends every session the user has.
+once; the server refuses a second use, and after a few seconds treats it as theft and
+ends every session the user has.
 localStorage is shared by every tab, so tabs would race to use one token; and "Duplicate
 tab" copies sessionStorage — which is why the token is never left there while a tab is
 open. A duplicated tab starts signed out instead of racing the original. So does a tab
 the browser discards to save memory — it gets no `pagehide` to park the token in.
 
-If the API does not answer while a session is being restored (a deploy, a network
-blip), the console says so and offers a retry instead of the sign-in form: the token is
-still good.
+If a refresh gets no answer (a deploy, a network blip), the console tries again after 1
+and 3 seconds — inside the server's 10-second grace window, so if the unanswered attempt
+did rotate the token, the retry is merely refused rather than taken for theft. If there
+is still no answer, it says so and offers a retry instead of the sign-in form: usually
+the token is still good. A page restored from the back/forward cache re-establishes its
+session from the parked token, with an empty cache — it may belong to someone else.
 
 The cost: a script injected into the page could read the token. React escapes
 everything it renders and this app never sets raw HTML, which is the defence today; an
@@ -194,8 +198,8 @@ httpOnly cookie, which no script can read, is the upgrade path.
 
 **Why the refresh is single-flight.** Several queries can find the access token expired
 at the same moment. If each refreshed on its own, the second would present a refresh
-token the first had just used — and the server would end the session as stolen. They
-share one exchange instead.
+token the first had just used — and the server would refuse it, or a few seconds later
+end every session as stolen. They share one exchange instead.
 
 ## Not built
 

@@ -55,8 +55,9 @@ async def login(session: SessionDep, payload: LoginRequest) -> TokenPair:
     response_model=TokenPair,
     summary="Exchange a refresh token for a new pair",
     description=(
-        "Each refresh token works once. Presenting one that was already used revokes "
-        "every session of that user — it means the token was copied."
+        "Each refresh token works once. Presenting one that was used more than "
+        "REFRESH_REUSE_GRACE_SECONDS ago ends every session of that user — it means the "
+        "token was copied. Sooner than that, it is only refused."
     ),
     responses=_UNAUTHORIZED,
 )
