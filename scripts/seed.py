@@ -145,7 +145,8 @@ def code_of(payload: dict) -> str:
 
 
 def sign_in(email: str) -> str | None:
-    """An access token, or None. It lasts minutes — far longer than this script runs."""
+    """An access token, or None. It lasts ACCESS_TOKEN_MINUTES — 15 by default, longer
+    than a seed run unless set near its 1-minute minimum."""
     status, tokens = call("POST", "/auth/login", {"email": email, "password": PASSWORD})
     return tokens["access_token"] if status == 200 else None
 
@@ -178,7 +179,7 @@ def main() -> None:
         raise SystemExit(1)
 
     if not PASSWORD:
-        print("SEED_PASSWORD is not set — copy .env.example to .env, or export it.")
+        print("SEED_PASSWORD is not set — export it (Compose passes it from .env).")
         raise SystemExit(1)
     recruiter = sign_in(RECRUITER_EMAIL)
     if recruiter is None:
@@ -221,6 +222,12 @@ def main() -> None:
         tokens[candidate["full_name"]] = sign_in(spec["email"]) or ""
         print(f"  cand {candidate['full_name']:<28} {candidate['years_experience']}y")
 
+    if not candidates:
+        print(
+            "\nEvery candidate already has an account. Ones created before authentication"
+            "\nhave no password and cannot sign in: `docker compose down -v` and re-seed for"
+            "\na full demo (it deletes the local database)."
+        )
     if not jobs or not candidates:
         print("\nNothing new to apply with.")
         return
@@ -237,7 +244,7 @@ def main() -> None:
         ("Senior Backend Engineer", "Ayesha Khan"),   # duplicate -> 409
         ("Senior Backend Engineer", "Sara Iqbal"),    # too junior -> 422
         ("Frontend Engineer", "Omar Farooq"),         # no matching skill -> 422
-        ("Engineering Manager", "Ayesha Khan"),       # draft job -> 409
+        ("Engineering Manager", "Ayesha Khan"),       # draft job -> 404, unseen
     ]
 
     for title, name in attempts:

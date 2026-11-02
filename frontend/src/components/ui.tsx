@@ -61,7 +61,7 @@ export function ErrorNotice({ error }: { error: unknown }) {
   if (error instanceof ApiError) {
     const copy = RULE_COPY[error.code];
     return (
-      <div className={`notice ${copy?.rule ? "notice-rule" : "notice-error"}`}>
+      <div className={`notice ${copy?.rule ? "notice-rule" : "notice-error"}`} role="alert">
         <strong>{copy?.title ?? "Request failed"}</strong>
         {error.message}
         {error.requestId && (
@@ -75,7 +75,7 @@ export function ErrorNotice({ error }: { error: unknown }) {
   }
 
   return (
-    <div className="notice notice-error">
+    <div className="notice notice-error" role="alert">
       <strong>Could not reach the API</strong>
       {error instanceof Error ? error.message : String(error)}
     </div>

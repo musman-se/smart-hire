@@ -105,8 +105,10 @@ docker compose exec api python -m app.auth.cli create-recruiter alice@example.co
 
 **Roles.** A recruiter manages jobs, publishing and the hiring pipeline, and reads every
 candidate and application. A candidate reads published jobs, applies as themselves, and
-reads, edits and withdraws only their own profile and applications. Another user's
-profile or application answers 404, as if it did not exist. Full table:
+reads, edits and withdraws only their own profile and applications — without the match
+score or the recruiter's stage notes. A closed job stays readable to the candidates who
+applied to it. Another user's profile or application, or a job a candidate could never
+have seen, answers 404, as if it did not exist. Full table:
 [ARCHITECTURE.md §4.25](../docs/ARCHITECTURE.md#425-secure-by-default-roles-at-the-boundary-404-for-other-peoples-data).
 
 ### Jobs

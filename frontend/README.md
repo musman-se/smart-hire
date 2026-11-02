@@ -1,6 +1,7 @@
 # SmartHire — Frontend
 
-Recruiter console for the SmartHire API. React + TypeScript, built with Vite.
+The SmartHire console — for recruiters and candidates alike. React + TypeScript, built
+with Vite.
 
 ## Why Vite and not Next.js
 
@@ -120,13 +121,17 @@ src/
 ├── api/
 │   ├── schema.d.ts    generated — do not edit
 │   ├── types.ts       friendly aliases over the generated types
-│   ├── client.ts      fetch wrapper, error envelope, ApiError
+│   ├── client.ts      fetch wrapper, error envelope, ApiError, token refresh
 │   └── resources.ts   one function per endpoint, no React
+├── auth/
+│   ├── session.ts        where the tokens live
+│   ├── AuthProvider.tsx  who is signed in
+│   └── RequireAuth.tsx   the route guard
 ├── hooks/
 │   ├── queries.ts            TanStack Query hooks, cache keys, polling rules
 │   └── useIdempotencyKey.ts  one key per intended action
 ├── components/        Layout, pills, modal, pagination, error notice
-└── pages/             Jobs, JobDetail, Candidates, CandidateDetail
+└── pages/             Login, Register, Jobs, JobDetail, Candidates, CandidateDetail
 ```
 
 `resources.ts` has no React in it, so the API layer is testable and reusable without
@@ -160,22 +165,27 @@ seed creates one — see the root README).
 
 | Piece | Does |
 |---|---|
-| `auth/session.ts` | Holds the tokens. Access token in memory; refresh token in sessionStorage |
-| `api/client.ts` | Sends `Authorization: Bearer`; on a 401, exchanges the refresh token once and retries |
+| `auth/session.ts` | Holds the tokens in memory; parks the refresh token in sessionStorage across a reload |
+| `api/client.ts` | Sends `Authorization: Bearer`; on a 401, exchanges the refresh token once and retries. Signs out only when the server *refuses* the refresh — not when it is unreachable |
 | `auth/AuthProvider.tsx` | Who is signed in; restores the session on reload; clears the query cache on sign-out |
-| `auth/RequireAuth.tsx` | Redirects to `/login`, remembering the page |
+| `auth/RequireAuth.tsx` | Redirects to `/login`, remembering the page — except after the sign-out button, when the next person may be someone else |
 
 The console is one app for both roles. A recruiter sees every job, the pipeline and the
 candidate list. A candidate sees published jobs, applies as themselves, and follows and
 withdraws their own applications under *My applications*. The role only decides what is
 **shown**; the server decides what is **allowed**, and refuses the rest.
 
-**Why sessionStorage for the refresh token.** It survives a reload of the tab and is
-gone when the tab closes. localStorage is shared by every tab: two tabs rotating one
-refresh token would trip the server's reuse detection and sign both out. The cost is
-that a script injected into the page could read it. React escapes everything it renders
-and this app never sets raw HTML, which is the defence today; an httpOnly cookie, which
-no script can read, is the upgrade path.
+**Where the refresh token lives.** In memory while the tab is open. On `pagehide` it is
+parked in sessionStorage, and the next page load takes it back out and deletes it — so
+a reload keeps you signed in. The care is about two tabs: each refresh token works
+once, and the server treats a second use as theft and ends every session the user has.
+localStorage is shared by every tab, so tabs would race to use one token; and "Duplicate
+tab" copies sessionStorage — which is why the token is never left there while a tab is
+open. A duplicated tab starts signed out instead of racing the original.
+
+The cost: a script injected into the page could read the token. React escapes
+everything it renders and this app never sets raw HTML, which is the defence today; an
+httpOnly cookie, which no script can read, is the upgrade path.
 
 **Why the refresh is single-flight.** Several queries can find the access token expired
 at the same moment. If each refreshed on its own, the second would present a refresh

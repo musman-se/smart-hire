@@ -92,14 +92,15 @@ async def test_applying_to_a_different_job_is_allowed(client: AsyncClient) -> No
 # --- Rule 2: eligibility ---------------------------------------------------------
 
 
-async def test_draft_job_does_not_accept_applications(client: AsyncClient) -> None:
+async def test_a_draft_job_does_not_exist_to_a_candidate(client: AsyncClient) -> None:
+    """404, as GET /jobs/{id} answers: a 409 would confirm the unpublished job is real."""
     job = await make_job(client, publish=False)
     candidate = await make_candidate(client)
 
     response = await apply(client, job, candidate)
 
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "job_not_open"
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
 
 
 async def test_closed_job_does_not_accept_applications(client: AsyncClient) -> None:

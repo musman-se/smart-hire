@@ -26,9 +26,16 @@ Sign in at http://localhost:3000 as `recruiter@example.com`, or as any seeded ca
 (e.g. `ayesha.khan@example.com`), with `SEED_PASSWORD` from `.env`. Candidates can also
 create their own account at `/register`.
 
+> **Upgrading a stack from before authentication?** Add `JWT_SECRET_KEY`,
+> `SEED_RECRUITER_EMAIL` and `SEED_PASSWORD` to your `.env` (see `.env.example`) — the
+> API refuses to start without the key. The migration gives existing candidates
+> accounts with **no password**, which cannot sign in, so the old demo candidates stay
+> unusable; `docker compose down -v` and re-seed for a full demo. That deletes the
+> local database.
+
 | Surface | URL |
 |---|---|
-| Recruiter console | http://localhost:3000 |
+| Console — recruiters and candidates | http://localhost:3000 |
 | API | http://localhost:8000 |
 | Interactive API docs | http://localhost:8000/docs |
 | Temporal UI — every workflow run | http://localhost:8233 |

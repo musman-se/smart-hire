@@ -2,61 +2,73 @@
  * Where the tokens live between requests. No React here, and no HTTP — client.ts uses
  * this to sign requests and renew the access token; AuthProvider listens for sign-out.
  *
- * - The **access token** is held in memory only. It lasts minutes, and a reload simply
- *   exchanges the refresh token for a new one.
- * - The **refresh token** is in sessionStorage: it survives a reload of this tab, and
- *   is gone when the tab closes. Not localStorage, deliberately — that is shared by
- *   every tab, and two tabs using one refresh token would each rotate it, so the second
- *   would present a used token and the server's reuse detection would sign both out.
+ * Both tokens are held in memory while the tab is open. The refresh token is *parked*
+ * in sessionStorage only while the page unloads (`pagehide`), and taken back out — and
+ * deleted from storage — the moment the next page loads. So:
  *
- * The tradeoff: a script injected into the page (XSS) can read sessionStorage. React
- * escapes everything it renders and this app never sets raw HTML, which is the defence
- * today. An httpOnly cookie, which no script can read, is the upgrade path.
+ * - **A reload keeps you signed in.** The new page finds the parked token and exchanges
+ *   it for a fresh access token.
+ * - **Two tabs never share a refresh token.** Each refresh token works once, and the
+ *   server treats a second use as theft and ends every session the user has. "Duplicate
+ *   tab" copies sessionStorage — but while a tab is open its sessionStorage holds no
+ *   token, so the copy starts signed out instead of racing the original. localStorage,
+ *   shared by every tab, would have that race on every refresh.
+ *
+ * The tradeoff: a script injected into the page (XSS) could read the token from memory
+ * or storage. React escapes everything it renders and this app never sets raw HTML,
+ * which is the defence today. An httpOnly cookie, which no script can read, is the
+ * upgrade path.
  */
 
 import type { TokenPair } from "../api/types";
 
-const REFRESH_KEY = "smarthire.refresh_token";
+const PARKED_KEY = "smarthire.refresh_token";
 
 let accessToken: string | null = null;
+let refreshToken: string | null = takeParkedToken();
 const signOutListeners = new Set<() => void>();
 
-// sessionStorage can be unavailable (a privacy mode, a sandboxed frame); the session
-// then lasts until the next reload instead of breaking the app.
-let memoryRefreshToken: string | null = null;
-
-function readRefreshToken(): string | null {
+/** Read and delete in one step: once this tab holds the token, storage must not. */
+function takeParkedToken(): string | null {
   try {
-    return sessionStorage.getItem(REFRESH_KEY);
+    const token = sessionStorage.getItem(PARKED_KEY);
+    sessionStorage.removeItem(PARKED_KEY);
+    return token;
   } catch {
-    return memoryRefreshToken;
+    return null; // storage unavailable (a sandboxed frame): reloads will sign out
   }
 }
 
-function writeRefreshToken(token: string | null): void {
-  memoryRefreshToken = token;
+function park(): void {
   try {
-    if (token === null) sessionStorage.removeItem(REFRESH_KEY);
-    else sessionStorage.setItem(REFRESH_KEY, token);
+    if (refreshToken) sessionStorage.setItem(PARKED_KEY, refreshToken);
   } catch {
-    // Kept in memory above.
+    // Nothing to do: the next page load starts signed out.
   }
 }
+
+// pagehide fires on reload, navigation away and tab close — unlike beforeunload, also
+// on mobile and when the page enters the back/forward cache. Coming back from that
+// cache does not reload this module, so the parked token is taken back on pageshow.
+window.addEventListener("pagehide", park);
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) refreshToken = takeParkedToken() ?? refreshToken;
+});
 
 export const session = {
   accessToken: (): string | null => accessToken,
-  refreshToken: readRefreshToken,
+  refreshToken: (): string | null => refreshToken,
 
   store(tokens: TokenPair): void {
     accessToken = tokens.access_token;
-    writeRefreshToken(tokens.refresh_token);
+    refreshToken = tokens.refresh_token;
   },
 
   /** Forget both tokens and tell whoever is listening — the UI returns to sign-in. */
   clear(): void {
-    const hadSession = accessToken !== null || readRefreshToken() !== null;
+    const hadSession = accessToken !== null || refreshToken !== null;
     accessToken = null;
-    writeRefreshToken(null);
+    refreshToken = null;
     if (hadSession) signOutListeners.forEach((listener) => listener());
   },
 

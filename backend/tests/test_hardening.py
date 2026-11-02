@@ -14,7 +14,10 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from temporalio.exceptions import ApplicationError
 
-from app.core.config import Settings
+from app.applications import service as application_service
+from app.applications.enums import ApplicationStage
+from app.applications.errors import InvalidStageTransitionError
+from app.core.config import EXAMPLE_JWT_SECRET_KEY, Settings
 from app.core.db import get_session
 from app.core.temporal import WorkflowUnavailableError
 from app.jobs.models import Job
@@ -151,6 +154,32 @@ async def test_application_read_has_no_phantom_note_field(client: AsyncClient) -
     application = (await apply(client, job, candidate)).json()
 
     assert "note" not in application
+
+
+async def test_a_locked_load_rereads_a_row_already_in_the_session(
+    client: AsyncClient, engine
+) -> None:
+    """Withdrawing first reads the application unlocked, to check it is the caller's.
+    session.get with a lock still returned that cached copy: a recruiter's rejection
+    committed in between went unseen, and the withdrawal overwrote it."""
+    job = await make_job(client)
+    candidate = await make_candidate(client)
+    application_id = uuid.UUID((await apply(client, job, candidate)).json()["id"])
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with sessions() as candidates_request:
+        cached = await application_service.get_application(candidates_request, application_id)
+        assert cached.stage is ApplicationStage.APPLIED
+        async with sessions() as recruiters_request:
+            await application_service.advance_stage(
+                recruiters_request, application_id, ApplicationStage.REJECTED
+            )
+
+        with pytest.raises(InvalidStageTransitionError):
+            await application_service.withdraw_application(candidates_request, application_id)
+
+    stage = (await client.get(f"/applications/{application_id}")).json()["stage"]
+    assert stage == "rejected"
 
 
 # --- input validation: 422, never 500 ----------------------------------------------------
@@ -302,6 +331,25 @@ def test_a_missing_signing_key_fails_at_startup(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
     with pytest.raises(ValidationError, match="JWT_SECRET_KEY is not set"):
         Settings(_env_file=None, postgres_password="a-real-secret")
+
+
+def test_production_refuses_the_example_signing_key() -> None:
+    with pytest.raises(ValidationError, match="example value"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            postgres_password="a-real-secret",
+            jwt_secret_key=EXAMPLE_JWT_SECRET_KEY,
+        )
+
+
+def test_the_refused_example_key_is_the_one_in_env_example() -> None:
+    """Two copies of one value: if .env.example's changed alone, production would
+    accept the new example key."""
+    from pathlib import Path
+
+    example = Path(__file__).resolve().parents[2] / ".env.example"
+    assert f"JWT_SECRET_KEY={EXAMPLE_JWT_SECRET_KEY}" in example.read_text(encoding="utf-8")
 
 
 def test_a_short_signing_key_fails_at_startup() -> None:

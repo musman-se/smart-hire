@@ -90,12 +90,24 @@ async def create_job(
     )
 
 
-@router.get("/{job_id}", response_model=JobRead, summary="Get one job")
+@router.get(
+    "/{job_id}",
+    response_model=JobRead,
+    summary="Get one job",
+    description=(
+        "A candidate may read a published job, and a closed one they applied to — so "
+        "their applications keep pointing somewhere."
+    ),
+)
 async def get_job(session: SessionDep, user: CurrentUserDep, job_id: uuid.UUID) -> JobRead:
     job = await job_service.get_job(session, job_id)
-    # 404, not 403: to a candidate, an unpublished job does not exist yet.
     if user.role is Role.CANDIDATE and job.status is not CANDIDATE_VISIBLE:
-        raise JobNotFoundError(job_id)
+        applied_before_it_closed = job.status is JobStatus.CLOSED and (
+            await job_service.has_applied(session, job_id, user.id)
+        )
+        # 404, not 403: to a candidate, an unpublished job does not exist yet.
+        if not applied_before_it_closed:
+            raise JobNotFoundError(job_id)
     return JobRead.model_validate(job)
 
 

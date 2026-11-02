@@ -20,11 +20,32 @@ from app.skills.service import resolve_skills
 async def get_job(session: AsyncSession, job_id: uuid.UUID, *, lock: bool = False) -> Job:
     """Load a job. lock=True takes a row lock (SELECT ... FOR NO KEY UPDATE) held until
     the transaction ends — for callers that read the job, decide, then write based on
-    what they read. See applications.service.apply_to_job."""
-    job = await session.get(Job, job_id, with_for_update={"key_share": True} if lock else None)
+    what they read. See applications.service.apply_to_job.
+
+    A locked load also overwrites any copy already in the session (populate_existing).
+    Without it, session.get takes the lock but hands back the object an earlier,
+    unlocked read put in the identity map — so the caller decides on what the row was
+    *before* the lock, and the lock protects nothing.
+    """
+    job = await session.get(
+        Job,
+        job_id,
+        with_for_update={"key_share": True} if lock else None,
+        populate_existing=lock,
+    )
     if job is None:
         raise JobNotFoundError(job_id)
     return job
+
+
+async def has_applied(session: AsyncSession, job_id: uuid.UUID, candidate_id: uuid.UUID) -> bool:
+    """Whether this candidate has an application to this job. Through Job.applications,
+    by keyword, so the jobs package needs no import from applications."""
+    return bool(
+        await session.scalar(
+            select(Job.id).where(Job.id == job_id, Job.applications.any(candidate_id=candidate_id))
+        )
+    )
 
 
 async def list_jobs(

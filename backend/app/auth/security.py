@@ -6,8 +6,12 @@ who stole the table about as much as it costs us at sign-in, which is the point.
 hash has its own random salt, so equal passwords do not produce equal hashes.
 
 That cost is CPU time, and on the event loop it would stall every other request for
-about a tenth of a second. Hashing therefore runs in a worker thread. argon2-cffi
-releases the GIL while it works, so those threads hash truly in parallel.
+about a tenth of a second. Hashing therefore runs in worker threads — argon2-cffi
+releases the GIL while it works, so they hash truly in parallel — on a pool of its own,
+PASSWORD_HASH_WORKERS threads wide. Not the event loop's default pool: that one also
+resolves hostnames for every new database and Redis connection, and a burst of sign-ins
+queued on it would stall those too. The bound also caps the memory a burst can take
+(64 MiB per hash in flight); further sign-ins wait their turn.
 
 **Access tokens** are JWTs signed with HS256 and JWT_SECRET_KEY. The API verifies one
 with no database lookup of the token itself — but it cannot revoke one either, which is
@@ -24,6 +28,8 @@ import functools
 import hashlib
 import secrets
 import uuid
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -48,9 +54,20 @@ def _signing_key() -> str:
 
 # --- Passwords -----------------------------------------------------------------------
 
+_hashing_pool: ThreadPoolExecutor | None = None
+
+
+async def _in_hashing_pool[T](work: Callable[..., T], *args: object) -> T:
+    global _hashing_pool
+    if _hashing_pool is None:
+        _hashing_pool = ThreadPoolExecutor(
+            max_workers=settings.password_hash_workers, thread_name_prefix="password-hash"
+        )
+    return await asyncio.get_running_loop().run_in_executor(_hashing_pool, work, *args)
+
 
 async def hash_password(password: str) -> str:
-    return await asyncio.to_thread(password_hasher.hash, password)
+    return await _in_hashing_pool(password_hasher.hash, password)
 
 
 @functools.cache
@@ -78,9 +95,9 @@ async def verify_password(password: str, stored_hash: str | None) -> tuple[bool,
     """
     hasher = password_hasher
     if stored_hash is None:
-        await asyncio.to_thread(_verify_decoy, hasher, password)
+        await _in_hashing_pool(_verify_decoy, hasher, password)
         return False, None
-    return await asyncio.to_thread(hasher.verify_and_update, password, stored_hash)
+    return await _in_hashing_pool(hasher.verify_and_update, password, stored_hash)
 
 
 # --- Access tokens ---------------------------------------------------------------------

@@ -76,7 +76,8 @@ async def test_reusing_a_key_for_a_different_body_is_refused(client: AsyncClient
 
 async def test_a_business_refusal_is_replayed_too(client: AsyncClient) -> None:
     """A 4xx is a real answer: the retry hears the same one, without re-running."""
-    job = await make_job(client, publish=False)
+    job = await make_job(client)
+    await client.post(f"/jobs/{job['id']}/close")
     candidate = await make_candidate(client)
     headers = key() | candidate["auth"]
 

@@ -32,6 +32,7 @@ async def get_candidate(
         Candidate,
         candidate_id,
         with_for_update={"key_share": True, "of": Candidate} if lock else None,
+        populate_existing=lock,
     )
     if candidate is None:
         raise CandidateNotFoundError(candidate_id)
@@ -94,7 +95,9 @@ async def register_candidate(session: AsyncSession, payload: CandidateRegistrati
         # SELECT-then-INSERT check would let two concurrent registrations both pass the
         # check and race.
         await session.rollback()
-        raise DuplicateEmailError(f"An account with email {payload.email} already exists.") from exc
+        # The message names no email: domain errors are logged, and an address is
+        # personal data.
+        raise DuplicateEmailError("An account with this email already exists.") from exc
 
     logger.info("candidate_registered id=%s", candidate.id)
     return candidate

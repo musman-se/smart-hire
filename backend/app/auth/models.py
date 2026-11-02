@@ -57,8 +57,9 @@ class RefreshToken(Base, UUIDPrimaryKeyMixin):
     # every refresh makes.
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    # Set when the token is used or the user signs out. Kept rather than deleted, so a
+    # Set when the token is exchanged for the next one. Kept rather than deleted, so a
     # second use of the same token is recognised as reuse — see auth.service.refresh.
+    # Signing out deletes the row instead.
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

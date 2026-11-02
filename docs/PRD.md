@@ -334,12 +334,12 @@ tradeoffs: [ARCHITECTURE.md §4.22–4.26](ARCHITECTURE.md#422-short-lived-jwts-
 |---|---|
 | FR-A1 | Every endpoint except health, register, login, refresh and logout requires a valid access token (401 `not_authenticated` / `invalid_token`) |
 | FR-A2 | Recruiters manage jobs, publishing and the hiring pipeline; candidates cannot (403 `forbidden`) |
-| FR-A3 | Candidates see published jobs only, and only their own profile and applications; anything else answers 404 |
+| FR-A3 | Candidates see published jobs (and closed ones they applied to), and only their own profile and applications, without the match score or recruiter notes; anything else answers 404 |
 | FR-A4 | The applicant is the signed-in candidate; the request body cannot name another |
 | FR-A5 | Withdrawal is the candidate's action; recruiters reject instead |
 | FR-A6 | Idempotency keys are scoped to the user who sent them |
 | NFR-A1 | Passwords stored only as Argon2id hashes; refresh tokens only as SHA-256 hashes |
-| NFR-A2 | No signing key or password has a default in code; the key is at least 32 characters |
+| NFR-A2 | No signing key or password has a default in code; the key is at least 32 characters, and production refuses the example key |
 | NFR-A3 | Password hashing never blocks the event loop |
 | NFR-A4 | Sign-in timing does not reveal whether an email is registered |
 
@@ -348,9 +348,9 @@ tradeoffs: [ARCHITECTURE.md §4.22–4.26](ARCHITECTURE.md#422-short-lived-jwts-
 | Requirement | Code | Tests |
 |---|---|---|
 | FR-A1 | `app/main.py` (router-level dependency), `auth/dependencies.py` | `test_every_other_route_requires_a_token` — one case per operation |
-| FR-A2, FR-A3 | the routers, `auth/dependencies.py` | `test_a_candidate_cannot_do_a_recruiters_work`, `test_a_candidate_cannot_see_another_candidates_data` |
+| FR-A2, FR-A3 | the routers, `auth/dependencies.py` | `test_a_candidate_cannot_do_a_recruiters_work`, `test_a_candidate_cannot_see_another_candidates_data`, `test_the_recruiters_score_and_notes_are_not_shown_to_the_candidate`, `test_a_job_you_applied_to_stays_readable_after_it_closes` |
 | FR-A4 | `applications/schemas.py`, `applications/router.py` | `test_the_applicant_is_whoever_the_token_names` |
 | FR-A6 | `core/idempotency.py` | `test_one_key_sent_by_two_users_is_two_actions` |
-| UC-A3 | `auth/service.py` | `test_refreshing_rotates_the_refresh_token`, `test_reusing_a_refresh_token_revokes_every_session` |
+| UC-A3, UC-A4 | `auth/service.py` | `test_refreshing_rotates_the_refresh_token`, `test_reusing_a_refresh_token_revokes_every_session`, `test_a_signed_out_token_is_not_treated_as_stolen` |
 | NFR-A1 | `auth/security.py` | `test_the_password_is_stored_as_an_argon2id_hash`, `test_only_a_hash_of_the_refresh_token_is_stored` |
-| NFR-A2 | `core/config.py` | `test_a_missing_signing_key_fails_at_startup`, `test_a_short_signing_key_fails_at_startup` |
+| NFR-A2 | `core/config.py` | `test_a_missing_signing_key_fails_at_startup`, `test_a_short_signing_key_fails_at_startup`, `test_production_refuses_the_example_signing_key` |

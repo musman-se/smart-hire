@@ -70,7 +70,14 @@ export function toQuery(params: Record<string, unknown>): string {
   return query ? `?${query}` : "";
 }
 
-let refreshing: Promise<boolean> | null = null;
+/**
+ * renewed      a new pair is stored; retry the request
+ * refused      the server rejected the refresh token, or there is none: signed out
+ * unavailable  no answer about the token (a 502 mid-deploy): keep it, try again later
+ */
+export type RefreshOutcome = "renewed" | "refused" | "unavailable";
+
+let refreshing: Promise<RefreshOutcome> | null = null;
 
 /**
  * Exchange the refresh token for a new pair. Single-flight: when several requests find
@@ -78,10 +85,10 @@ let refreshing: Promise<boolean> | null = null;
  * present the same refresh token, and the server — seeing a used token presented again
  * — would treat it as stolen and end the session.
  */
-export function refreshSession(): Promise<boolean> {
-  refreshing ??= (async () => {
+export function refreshSession(): Promise<RefreshOutcome> {
+  refreshing ??= (async (): Promise<RefreshOutcome> => {
     const refreshToken = session.refreshToken();
-    if (!refreshToken) return false;
+    if (!refreshToken) return "refused";
 
     const response = await fetch(`${BASE_URL}/auth/refresh`, {
       method: "POST",
@@ -90,16 +97,22 @@ export function refreshSession(): Promise<boolean> {
     });
     if (response.ok) {
       session.store((await response.json()) as TokenPair);
-      return true;
+      return "renewed";
     }
-    // Refused: the session is over. Anything else (a 502 mid-deploy) is not an answer
-    // about the token, so it is kept for the next attempt.
-    if (response.status === 401) session.clear();
-    return false;
+    if (response.status === 401) {
+      session.clear();
+      return "refused";
+    }
+    return "unavailable";
   })().finally(() => {
     refreshing = null;
   });
   return refreshing;
+}
+
+/** Resolves once any refresh under way has settled. */
+export async function refreshInFlight(): Promise<void> {
+  await refreshing?.catch(() => undefined);
 }
 
 interface RequestOptions extends RequestInit {
@@ -121,9 +134,11 @@ async function request<T>(path: string, init: RequestOptions = {}, isRetry = fal
 
   if (response.status === 401 && !anonymous) {
     // No access token yet (a reload) or an expired one: renew it, then try once more.
-    if (!isRetry && (await refreshSession())) return request<T>(path, init, true);
-    // Refused even with a fresh token, or nothing to refresh with: signed out.
-    session.clear();
+    // A refresh that got no answer leaves the session alone and reports this 401.
+    const outcome = isRetry ? "refused" : await refreshSession();
+    if (outcome === "renewed") return request<T>(path, init, true);
+    // Refused with a fresh token, or nothing to refresh with: signed out.
+    if (outcome === "refused") session.clear();
   }
 
   if (!response.ok) {

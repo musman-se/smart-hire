@@ -142,7 +142,12 @@ def _forged(**overrides) -> str:
         lambda: create_access_token(uuid.uuid4(), now=datetime.now(UTC) - timedelta(hours=2)),
         lambda: _forged(key="a-different-key-of-at-least-32-chars!", algorithm="HS256"),
         lambda: _forged(key="", algorithm="none"),
-        lambda: _forged(key="k" * 32, algorithm="HS256", claims={"sub": "not-a-uuid"}),
+        # Signed with the real key, so it is the subject that fails, not the signature.
+        lambda: _forged(
+            key=settings.jwt_secret_key.get_secret_value(),
+            algorithm="HS256",
+            claims={"sub": "not-a-uuid"},
+        ),
     ],
     ids=["garbage", "expired", "wrong-key", "alg-none", "bad-subject"],
 )
@@ -221,6 +226,43 @@ async def test_only_a_hash_of_the_refresh_token_is_stored(
     assert all(len(token_hash) == 64 for token_hash in stored)
 
 
+async def test_a_signed_out_token_is_not_treated_as_stolen(anonymous: AsyncClient) -> None:
+    """Signing out in one tab, then that tab's token turning up again, must not end the
+    user's other sessions — only reuse of a *rotated* token means theft."""
+    await make_candidate(anonymous, email="twotabs@example.com")
+    laptop = (await sign_in(anonymous, "twotabs@example.com")).json()
+    phone = (await sign_in(anonymous, "twotabs@example.com")).json()
+    await anonymous.post("/auth/logout", json={"refresh_token": laptop["refresh_token"]})
+
+    replayed = await anonymous.post(
+        "/auth/refresh", json={"refresh_token": laptop["refresh_token"]}
+    )
+    still_signed_in = await anonymous.post(
+        "/auth/refresh", json={"refresh_token": phone["refresh_token"]}
+    )
+
+    assert replayed.status_code == 401
+    assert still_signed_in.status_code == 200
+
+
+async def test_an_expired_rotated_token_does_not_end_other_sessions(
+    anonymous: AsyncClient, session: AsyncSession
+) -> None:
+    await make_candidate(anonymous, email="oldtoken@example.com")
+    old = (await sign_in(anonymous, "oldtoken@example.com")).json()["refresh_token"]
+    await anonymous.post("/auth/refresh", json={"refresh_token": old})  # rotated
+    other = (await sign_in(anonymous, "oldtoken@example.com")).json()["refresh_token"]
+    await session.execute(
+        update(RefreshToken)
+        .where(RefreshToken.revoked_at.is_not(None))
+        .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+    )
+    await session.commit()
+
+    assert (await anonymous.post("/auth/refresh", json={"refresh_token": old})).status_code == 401
+    assert (await anonymous.post("/auth/refresh", json={"refresh_token": other})).status_code == 200
+
+
 async def test_signing_out_revokes_the_refresh_token(anonymous: AsyncClient) -> None:
     await make_candidate(anonymous, email="bye@example.com")
     tokens = (await sign_in(anonymous, "bye@example.com")).json()
@@ -294,6 +336,8 @@ async def test_every_other_route_requires_a_token(
         ("DELETE", "/jobs/{job}"),
         ("POST", "/jobs/{job}/publish"),
         ("POST", "/jobs/{job}/close"),
+        ("POST", "/jobs/{job}/reopen"),
+        ("GET", "/jobs/{job}/content"),
         ("GET", "/jobs/{job}/publication"),
         ("GET", "/jobs/{job}/applications"),
         ("GET", "/candidates"),
@@ -356,6 +400,43 @@ async def test_a_candidate_cannot_see_another_candidates_data(client: AsyncClien
     withdraw = await client.delete(f"/applications/{theirs['id']}", headers=me["auth"])
     assert edit.status_code == withdraw.status_code == 404
     assert (await client.get(f"/candidates/{other['id']}")).json()["full_name"] != "Hijacked"
+
+
+async def test_the_recruiters_score_and_notes_are_not_shown_to_the_candidate(
+    client: AsyncClient,
+) -> None:
+    job = await make_job(client)
+    candidate = await make_candidate(client)
+    application = (await apply(client, job, candidate)).json()
+    url = f"/applications/{application['id']}"
+    await client.post(f"{url}/stage", json={"stage": "rejected", "note": "Salary too high"})
+
+    as_recruiter = (await client.get(url)).json()
+    as_candidate = (await client.get(url, headers=candidate["auth"])).json()
+    listed = (await client.get("/applications", headers=candidate["auth"])).json()["items"]
+    history = (await client.get(f"{url}/history", headers=candidate["auth"])).json()
+
+    assert as_recruiter["match_score"] is not None
+    assert as_candidate["match_score"] is None
+    assert listed[0]["match_score"] is None
+    assert [change["to_stage"] for change in history] == ["applied", "rejected"]
+    assert all(change["note"] is None for change in history)
+    recruiter_history = (await client.get(f"{url}/history")).json()
+    assert recruiter_history[-1]["note"] == "Salary too high"
+
+
+async def test_a_job_you_applied_to_stays_readable_after_it_closes(client: AsyncClient) -> None:
+    job = await make_job(client)
+    applicant, bystander = await make_candidate(client), await make_candidate(client)
+    await apply(client, job, applicant)
+    await client.post(f"/jobs/{job['id']}/close")
+    url = f"/jobs/{job['id']}"
+
+    assert (await client.get(url, headers=applicant["auth"])).json()["status"] == "closed"
+    assert (await client.get(url, headers=bystander["auth"])).status_code == 404
+    # Reopened, it is a draft again — hidden from everyone until it is published.
+    await client.post(f"{url}/reopen")
+    assert (await client.get(url, headers=applicant["auth"])).status_code == 404
 
 
 async def test_a_candidate_lists_only_their_own_applications(client: AsyncClient) -> None:

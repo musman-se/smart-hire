@@ -1,14 +1,28 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
-import { refreshSession } from "../api/client";
+import { refreshInFlight, refreshSession } from "../api/client";
 import { authApi } from "../api/resources";
 import type { User } from "../api/types";
 import { session } from "./session";
 
+/**
+ * `keepPlace` says whether sign-in should return to the page that was showing. Yes for
+ * a deep link or an expired session — the same person is coming back. No after the
+ * sign-out button: whoever signs in next may be someone else, and the last page was
+ * the previous user's.
+ */
 type AuthState =
   | { status: "loading" }
-  | { status: "signed-out" }
+  | { status: "signed-out"; keepPlace: boolean }
   | { status: "signed-in"; user: User };
 
 interface AuthContextValue {
@@ -26,7 +40,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [state, setState] = useState<AuthState>(() =>
-    session.refreshToken() ? { status: "loading" } : { status: "signed-out" },
+    session.refreshToken() ? { status: "loading" } : { status: "signed-out", keepPlace: true },
   );
 
   // A reload keeps the refresh token but not the access token: exchange it, then ask
@@ -36,12 +50,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (state.status !== "loading") return;
     let cancelled = false;
     refreshSession()
-      .then((renewed) => (renewed ? authApi.me() : null))
+      .then((outcome) => (outcome === "renewed" ? authApi.me() : null))
       .then((user) => {
-        if (!cancelled) setState(user ? { status: "signed-in", user } : { status: "signed-out" });
+        if (cancelled) return;
+        setState(user ? { status: "signed-in", user } : { status: "signed-out", keepPlace: true });
       })
       .catch(() => {
-        if (!cancelled) setState({ status: "signed-out" });
+        if (!cancelled) setState({ status: "signed-out", keepPlace: true });
       });
     return () => {
       cancelled = true;
@@ -50,11 +65,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Signed out from anywhere — the button, or a refresh token the server refused.
   // The cache goes too: the next person to sign in must not see this one's data.
+  // signOut sets keepPlace to false itself; arriving here otherwise means the session
+  // expired under the same person.
+  const deliberate = useRef(false);
   useEffect(
     () =>
       session.onSignedOut(() => {
         queryClient.clear();
-        setState({ status: "signed-out" });
+        setState({ status: "signed-out", keepPlace: !deliberate.current });
+        deliberate.current = false;
       }),
     [queryClient],
   );
@@ -76,13 +95,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const signOut = useCallback(async () => {
+    // A refresh in flight would store a new pair after the clear below, and revoking
+    // the token it is replacing would achieve nothing. Let it land first.
+    await refreshInFlight();
     const refreshToken = session.refreshToken();
+    deliberate.current = true;
+    session.clear(); // signed out here at once, whatever the network does next
     if (refreshToken) {
-      // Revoke it server-side. If that fails the token still expires on its own, and
-      // this tab forgets it either way.
-      await authApi.logout(refreshToken).catch(() => undefined);
+      // Revoked server-side in the background. If that fails, the token still expires.
+      void authApi.logout(refreshToken).catch(() => undefined);
     }
-    session.clear();
   }, []);
 
   return (

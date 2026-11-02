@@ -47,6 +47,15 @@ router = APIRouter()
 recruiter_only = [Depends(require_recruiter)]
 
 
+def _as_seen_by(user: User, application: Application) -> ApplicationRead:
+    """The match score ranks candidates against one another for the recruiter. It is
+    not shown to the candidate being ranked."""
+    read = ApplicationRead.model_validate(application)
+    if user.role is Role.CANDIDATE:
+        return read.model_copy(update={"match_score": None})
+    return read
+
+
 async def _get_visible(session: AsyncSession, user: User, application_id: uuid.UUID) -> Application:
     """The application, if this user may see it. A candidate asking for someone else's
     gets the same 404 as for one that does not exist — see candidates.router._check_own."""
@@ -87,7 +96,7 @@ async def apply_to_job(
         # in the background; if the workflow engine is down they wait for a retry via
         # POST /applications/{id}/process — the candidate's 201 does not.
         await start_processing(processor, application.id)
-        return ApplicationRead.model_validate(application)
+        return _as_seen_by(candidate, application)
 
     return await idempotency.run(
         key=idempotency_key,
@@ -150,7 +159,8 @@ async def list_applications(
         candidate_id=candidate_id,
         stage=stage,
     )
-    return Page[ApplicationRead].of(applications, total, pagination)
+    items = [_as_seen_by(user, application) for application in applications]
+    return Page[ApplicationRead].of(items, total, pagination)
 
 
 @router.get("/{application_id}", response_model=ApplicationRead, summary="Get one application")
@@ -158,7 +168,7 @@ async def get_application(
     session: SessionDep, user: CurrentUserDep, application_id: uuid.UUID
 ) -> ApplicationRead:
     application = await _get_visible(session, user, application_id)
-    return ApplicationRead.model_validate(application)
+    return _as_seen_by(user, application)
 
 
 @router.post(
@@ -191,7 +201,12 @@ async def get_history(
 ) -> list[StageChangeRead]:
     await _get_visible(session, user, application_id)
     changes = await application_service.get_history(session, application_id)
-    return [StageChangeRead.model_validate(change) for change in changes]
+    history = [StageChangeRead.model_validate(change) for change in changes]
+    if user.role is Role.CANDIDATE:
+        # Notes are the recruiter's reasons ("salary expectations too high"), written
+        # for colleagues. The candidate sees every move and its date, not the why.
+        history = [change.model_copy(update={"note": None}) for change in history]
+    return history
 
 
 @router.post(

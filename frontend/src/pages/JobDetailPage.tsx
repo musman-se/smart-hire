@@ -108,8 +108,8 @@ function ApplyPanel({ job, candidateId }: { job: Job; candidateId: string }) {
       {apply.isSuccess && (
         <div className="notice notice-success">
           <strong>Application submitted</strong>
-          It starts in the <code>applied</code> stage. Your match score and a confirmation
-          follow in a moment, from the ProcessApplication workflow.
+          It starts in the <code>applied</code> stage, and a confirmation follows in a
+          moment. Follow its progress under My applications.
         </div>
       )}
     </div>

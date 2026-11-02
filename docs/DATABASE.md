@@ -181,7 +181,7 @@ twice, free to drift. It moved to `users`, and the API reads it through the prof
 relationship to its account.
 
 The link is a **shared primary key**: `candidates.id` is the profile's primary key *and*
-a foreign key to `users.id`. Three kinds of key meet in this schema, each doing one job:
+a foreign key to `users.id`. Four kinds of key meet in this schema, each doing one job:
 
 | Key | Example | What it guarantees |
 |---|---|---|

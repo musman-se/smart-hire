@@ -179,8 +179,8 @@ async def test_job_being_processed_cannot_be_edited_or_applied_to(
     application = await apply(client, job, candidate)
 
     assert edit.status_code == 409
-    assert application.status_code == 409
-    assert application.json()["error"]["code"] == "job_not_open"
+    # Mid-publish, the job is not yet visible to candidates at all.
+    assert application.status_code == 404
 
 
 async def test_publishing_a_processing_job_starts_a_fresh_run(

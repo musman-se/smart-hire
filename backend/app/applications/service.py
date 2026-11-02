@@ -37,7 +37,7 @@ from app.candidates.service import get_candidate
 from app.core.config import settings
 from app.core.errors import DomainError
 from app.jobs.enums import JobStatus
-from app.jobs.errors import JobNotOpenError
+from app.jobs.errors import JobNotFoundError, JobNotOpenError
 from app.jobs.models import Job
 from app.jobs.service import get_job
 
@@ -63,8 +63,13 @@ ALLOWED_TRANSITIONS: dict[ApplicationStage, set[ApplicationStage]] = {
 async def get_application(
     session: AsyncSession, application_id: uuid.UUID, *, lock: bool = False
 ) -> Application:
+    # populate_existing: see jobs.service.get_job. The router loads the application
+    # first, unlocked, to check it is the caller's; the locked load must not reuse that.
     application = await session.get(
-        Application, application_id, with_for_update={"key_share": True} if lock else None
+        Application,
+        application_id,
+        with_for_update={"key_share": True} if lock else None,
+        populate_existing=lock,
     )
     if application is None:
         raise ApplicationNotFoundError(application_id)
@@ -160,11 +165,13 @@ async def _apply(
     job = await get_job(session, job_id, lock=True)
     candidate = await get_candidate(session, candidate_id, lock=True)
 
-    # A draft job is not visible to candidates; a closed one is no longer accepting.
-    # The message does not name the status: to a candidate, a draft does not exist yet,
-    # and GET /jobs/{id} says so with a 404.
+    # A closed job that was once published is no longer accepting: 409. One that was
+    # never published — a draft, mid-publish, failed — does not exist to a candidate:
+    # 404, as GET /jobs/{id} answers. A 409 would confirm the hidden job is real.
     if job.status is not JobStatus.PUBLISHED:
-        raise JobNotOpenError("This job is not accepting applications.")
+        if job.status is JobStatus.CLOSED and job.published_at is not None:
+            raise JobNotOpenError("This job is no longer accepting applications.")
+        raise JobNotFoundError(job.id)
 
     _check_eligibility(job, candidate)
 

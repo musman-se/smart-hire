@@ -92,8 +92,8 @@ Inside each package the same layers apply:
 | `errors.py` | The ways this domain can refuse a request | HTTP beyond a status code |
 
 Dependencies point one way: `applications` uses `jobs` and `candidates`; neither of them
-imports `applications`. Every router uses `auth.dependencies` to learn who is calling;
-`auth` uses no other domain. Everything may use `core`; `core` uses nothing.
+imports `applications`. Every domain router uses `auth.dependencies` to learn who is
+calling; `auth` uses no other domain. Everything may use `core`; `core` uses nothing.
 
 The rule that matters: **services raise `DomainError`, never `HTTPException`.** Each
 domain declares its own errors (`jobs/errors.py`: `JobNotOpenError`, ...) on bases from
@@ -436,8 +436,15 @@ which of them is which, so it ends both sessions; the owner signs in again. The 
 token is opaque because nothing needs to read it except this table — a JWT would only
 add a second way to accept it.
 
-**Tradeoff.** Signing out revokes the refresh token, but the access token in hand still
-works until it expires — at most 15 minutes. Revoking access tokens too would mean a
+Only a *rotated* token counts as reuse. Signing out deletes the token's row, so a
+signed-out tab presenting its old token is turned away without ending the user's other
+sessions; an expired token is refused before the reuse check, for the same reason.
+
+**Tradeoffs.** There is no grace period: a client whose refresh succeeded but whose
+response was lost, and which retries with the old token, ends all its sessions and signs
+in again. A grace period would also give a thief that window. Signing out ends the
+refresh token, but the access token in hand still works until it expires — at most 15
+minutes. Revoking access tokens too would mean a
 database lookup of every token on every request, which is the server-side session this
 design avoided. Each request does load the *user* (one primary-key read), so a deleted
 account stops working immediately — §4.25.
@@ -449,8 +456,9 @@ default and must be at least 32 characters — the same rule as the database pas
 ### 4.23 Argon2id, hashed off the event loop
 
 **Decision.** Passwords are hashed with Argon2id through `pwdlib`, the library FastAPI's
-own documentation now recommends. Hashing and verifying run in a worker thread
-(`asyncio.to_thread`).
+own documentation now recommends. Hashing and verifying run on a thread pool of their
+own, `PASSWORD_HASH_WORKERS` (4) threads wide, and sign-in ends its database
+transaction before it starts hashing.
 
 **Alternatives rejected.** bcrypt (passlib); a fast hash with a salt.
 
@@ -462,6 +470,13 @@ would stall every other request, which is why it runs in a thread (argon2-cffi r
 the GIL, so the threads hash in parallel). An unknown email still pays for one hash, of
 a decoy, so the response time does not reveal which emails are registered. Hashes made
 with weaker parameters are upgraded the next time the password is proved.
+
+The pool is separate and bounded because sign-in is the cheapest request to send and
+the most expensive to answer. On the event loop's default pool, a burst of sign-ins
+would also delay the hostname lookups every new database connection needs; unbounded,
+it would take 64 MiB per hash in flight. And a sign-in that held its pooled database
+connection through the hash could, sixteen at a time, leave no connection for anyone
+else — so the read is committed first.
 
 ### 4.24 A candidate's profile shares its account's primary key
 
@@ -492,11 +507,11 @@ sends a request with no token to every other operation in the OpenAPI document.
 
 | | Recruiter | Candidate |
 |---|---|---|
-| Jobs | everything | read published jobs only |
+| Jobs | everything | read published jobs, and closed ones they applied to |
 | Publishing status, extracted content | yes | — |
 | Candidates | read all | read, edit, delete their own |
 | Apply | — | as themselves |
-| Applications | read all, advance, re-process | read their own, withdraw |
+| Applications | read all, advance, re-process | read their own — without the match score or the recruiter's notes — and withdraw |
 
 **Why.** Protection declared once cannot be forgotten on the next endpoint; protection
 added route by route eventually is. Role checks sit in the routers because *who may ask*
@@ -504,7 +519,13 @@ is an HTTP-boundary concern, while services keep their domain rules and stay cal
 from a Temporal activity. Identity comes from the token, never the body —
 `ApplicationCreate` no longer has a `candidate_id`, so nobody can apply as somebody
 else. Asking for another candidate's profile or application answers **404**, the same
-as for one that does not exist: a 403 would confirm the id is real. Withdrawing is the
+as for one that does not exist: a 403 would confirm the id is real. So does applying to
+a job the candidate could never have seen — a draft, or one mid-publish.
+
+What a candidate reads of their own application is filtered too. The match score ranks
+them against other applicants, and a stage-change note is the recruiter's reasoning for
+colleagues ("salary expectations too high"): both are left out of the candidate's view.
+Every move and its date are shown. Withdrawing is the
 candidate's decision and rejecting the recruiter's, so a recruiter cannot set
 `withdrawn`.
 
