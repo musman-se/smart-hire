@@ -9,6 +9,7 @@ import {
   type Candidate,
   type Job,
 } from "../api/types";
+import { useUser } from "../auth/AuthProvider";
 import {
   Empty,
   ErrorNotice,
@@ -23,55 +24,45 @@ import {
   useApplicationHistory,
   useApplicationNotifications,
   useApplyToJob,
-  useCandidates,
+  useCandidate,
+  useCandidateApplications,
   useJob,
   useJobApplications,
   useJobContent,
   useJobPublication,
   useJobTransition,
   useProcessApplication,
-  useWithdrawApplication,
 } from "../hooks/queries";
 import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
 
 const TEMPORAL_UI_URL = import.meta.env.VITE_TEMPORAL_UI_URL ?? "http://localhost:8233";
 
 /**
- * The panel that demonstrates the backend's rules.
+ * The panel that demonstrates the backend's rules, from the candidate's side.
  *
  * Every rejection path — duplicate, not eligible, limit reached, job full, job closed —
  * comes back as a typed error code and is rendered as guidance rather than a crash. This
- * is the screen worth demoing in the review.
+ * is the screen worth demoing in the review. There is no candidate picker: the
+ * applicant is whoever is signed in, which is also all the server will accept.
  */
-function ApplyPanel({ jobId, jobSkills }: { jobId: string; jobSkills: string[] }) {
-  const [candidateId, setCandidateId] = useState("");
+function ApplyPanel({ job, candidateId }: { job: Job; candidateId: string }) {
   const [coverLetter, setCoverLetter] = useState("");
   // Same input and no answer yet: same key, so re-pressing Submit after a timeout
   // cannot apply twice. Any answer settles the key; the next submit gets a fresh one.
-  const { key: idempotencyKey, settle } = useIdempotencyKey({ jobId, candidateId, coverLetter });
+  const { key: idempotencyKey, settle } = useIdempotencyKey({ jobId: job.id, coverLetter });
 
-  // A long candidate list would need a search-as-you-type picker; at this scale a
-  // single page of 100 is honest and simple.
-  const { data: candidates } = useCandidates({ limit: 100, offset: 0 });
-  const apply = useApplyToJob(jobId);
-
-  const selected = candidates?.items.find((c) => c.id === candidateId);
+  const { data: candidate } = useCandidate(candidateId);
+  const { data: mine } = useCandidateApplications(candidateId);
+  const apply = useApplyToJob(job.id);
+  const existing = mine?.items.find((application) => application.job_id === job.id);
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!candidateId) return;
-
     apply.mutate(
-      {
-        payload: { candidate_id: candidateId, cover_letter: coverLetter || null },
-        idempotencyKey,
-      },
+      { payload: { cover_letter: coverLetter || null }, idempotencyKey },
       {
         onSettled: (_data, error) => settle(error),
-        onSuccess: () => {
-          setCandidateId("");
-          setCoverLetter("");
-        },
+        onSuccess: () => setCoverLetter(""),
       },
     );
   }
@@ -79,53 +70,46 @@ function ApplyPanel({ jobId, jobSkills }: { jobId: string; jobSkills: string[] }
   return (
     <div className="panel">
       <div className="panel-head">
-        <h2>Add an applicant</h2>
+        <h2>Your application</h2>
       </div>
 
-      <form onSubmit={submit} className="form-grid">
-        <div className="field">
-          <label htmlFor="candidate">Candidate</label>
-          <select
-            id="candidate"
-            value={candidateId}
-            onChange={(e) => setCandidateId(e.target.value)}
-            required
-          >
-            <option value="">Select a candidate…</option>
-            {candidates?.items.map((candidate) => (
-              <option key={candidate.id} value={candidate.id}>
-                {candidate.full_name} · {candidate.years_experience}y
-              </option>
-            ))}
-          </select>
-        </div>
+      {existing ? (
+        <p>
+          You applied on {formatDate(existing.created_at)}. It is in the{" "}
+          <StagePill stage={existing.stage} /> stage —{" "}
+          <Link to={`/candidates/${candidateId}`}>follow it in My applications</Link>.
+        </p>
+      ) : (
+        <form onSubmit={submit} className="form-grid">
+          {candidate && (
+            <EligibilityHint candidate={candidate} jobSkills={job.required_skills ?? []} />
+          )}
 
-        {selected && <EligibilityHint candidate={selected} jobSkills={jobSkills} />}
+          <div className="field">
+            <label htmlFor="cover">Cover letter</label>
+            <textarea
+              id="cover"
+              value={coverLetter}
+              onChange={(e) => setCoverLetter(e.target.value)}
+              placeholder="Optional"
+              style={{ minHeight: "4rem" }}
+            />
+          </div>
 
-        <div className="field">
-          <label htmlFor="cover">Cover letter</label>
-          <textarea
-            id="cover"
-            value={coverLetter}
-            onChange={(e) => setCoverLetter(e.target.value)}
-            placeholder="Optional"
-            style={{ minHeight: "4rem" }}
-          />
-        </div>
-
-        <div>
-          <button type="submit" className="primary" disabled={!candidateId || apply.isPending}>
-            {apply.isPending ? "Submitting…" : "Submit application"}
-          </button>
-        </div>
-      </form>
+          <div>
+            <button type="submit" className="primary" disabled={apply.isPending}>
+              {apply.isPending ? "Submitting…" : "Apply"}
+            </button>
+          </div>
+        </form>
+      )}
 
       <ErrorNotice error={apply.error} />
       {apply.isSuccess && (
         <div className="notice notice-success">
           <strong>Application submitted</strong>
-          It starts in the <code>applied</code> stage. Its match score and the candidate's
-          confirmation follow in a moment, from the ProcessApplication workflow.
+          It starts in the <code>applied</code> stage. Your match score and a confirmation
+          follow in a moment, from the ProcessApplication workflow.
         </div>
       )}
     </div>
@@ -144,7 +128,7 @@ function EligibilityHint({ candidate, jobSkills }: { candidate: Candidate; jobSk
 
   return (
     <div className="field">
-      <label>Candidate skills</label>
+      <label>Your skills</label>
       <div>
         <Tags items={candidateSkills} highlight={jobSkills} />
       </div>
@@ -239,10 +223,9 @@ function ApplicationTimeline({ applicationId }: { applicationId: string }) {
 
 function ApplicationRow({ application }: { application: Application }) {
   const advance = useAdvanceStage();
-  const withdraw = useWithdrawApplication();
   const [expanded, setExpanded] = useState(false);
-  // Withdrawal is the candidate's action and has its own button; the stage buttons are
-  // the recruiter's.
+  // Withdrawal is the candidate's decision, made from their own account — the server
+  // refuses it from a recruiter. The recruiter's way to end an application is reject.
   const nextStages = NEXT_STAGES[application.stage].filter((stage) => stage !== "withdrawn");
   const terminal = TERMINAL_STAGES.has(application.stage);
 
@@ -277,15 +260,6 @@ function ApplicationRow({ application }: { application: Application }) {
               </button>
             ))}
             {terminal && <span className="muted">final</span>}
-            {!terminal && (
-              <button
-                type="button"
-                className="small ghost"
-                onClick={() => withdraw.mutate(application.id)}
-              >
-                Withdraw
-              </button>
-            )}
             <button
               type="button"
               className="small ghost"
@@ -304,10 +278,10 @@ function ApplicationRow({ application }: { application: Application }) {
           </td>
         </tr>
       )}
-      {(advance.error || withdraw.error) && (
+      {advance.error && (
         <tr>
           <td colSpan={5}>
-            <ErrorNotice error={advance.error ?? withdraw.error} />
+            <ErrorNotice error={advance.error} />
           </td>
         </tr>
       )}
@@ -475,15 +449,139 @@ function ContentPanel({ job }: { job: Job }) {
   );
 }
 
+/** Publish, close, reopen — the recruiter's lifecycle buttons. */
+function JobActions({ job }: { job: Job }) {
+  const transition = useJobTransition(job.id);
+
+  return (
+    <>
+      <div className="button-row">
+        {(job.status === "draft" || job.status === "publish_failed") && (
+          <button
+            type="button"
+            className="primary"
+            disabled={transition.isPending}
+            onClick={() => transition.mutate("publish")}
+          >
+            {job.status === "publish_failed" ? "Retry publishing" : "Publish"}
+          </button>
+        )}
+        {job.status === "processing" && (
+          <button type="button" className="primary" disabled>
+            Publishing…
+          </button>
+        )}
+        {job.status !== "closed" && job.status !== "draft" && (
+          <button type="button" onClick={() => transition.mutate("close")}>
+            Close
+          </button>
+        )}
+        {job.status === "closed" && (
+          <button type="button" onClick={() => transition.mutate("reopen")}>
+            Reopen
+          </button>
+        )}
+      </div>
+      <ErrorNotice error={transition.error} />
+    </>
+  );
+}
+
+function ApplicationsPanel({ jobId }: { jobId: string }) {
+  const { data: applications } = useJobApplications(jobId);
+
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <h2>Applications</h2>
+        <span className="spacer" />
+        <span className="muted">{applications?.total ?? 0} total</span>
+      </div>
+
+      {!applications || applications.items.length === 0 ? (
+        <Empty>No applications yet.</Empty>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Candidate</th>
+                <th>Stage</th>
+                <th>Applied</th>
+                <th title="Match score, 0–100: required skills 60%, experience 25%, other mentioned skills 15%">
+                  Score
+                </th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {applications.items.map((application) => (
+                <ApplicationRow key={application.id} application={application} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailsPanel({ job }: { job: Job }) {
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <h2>Details</h2>
+        <span className="spacer" />
+        <StatusPill status={job.status} />
+      </div>
+
+      <dl className="detail-list">
+        <dt>Employment</dt>
+        <dd>{job.employment_type?.replace("_", " ")}</dd>
+
+        <dt>Min. experience</dt>
+        <dd>
+          {job.min_experience_years} year{job.min_experience_years === 1 ? "" : "s"}
+        </dd>
+
+        <dt>Cap</dt>
+        <dd>{job.max_applications ?? "Unlimited"}</dd>
+
+        <dt>Published</dt>
+        <dd>{formatDate(job.published_at)}</dd>
+
+        <dt>Created</dt>
+        <dd>{formatDate(job.created_at)}</dd>
+
+        <dt>Required skills</dt>
+        <dd>
+          <Tags items={job.required_skills ?? []} />
+        </dd>
+      </dl>
+
+      <h3 style={{ margin: "1.2rem 0 0.4rem" }}>Description</h3>
+      <p className="muted" style={{ whiteSpace: "pre-wrap", margin: 0 }}>
+        {job.description}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * One page, two audiences. A recruiter runs the pipeline: lifecycle, applications,
+ * publishing, extracted content. A candidate sees the posting and applies. Each panel
+ * fetches only what its audience may read — the server refuses the rest anyway.
+ */
 export function JobDetailPage() {
   const { jobId = "" } = useParams();
+  const user = useUser();
   const { data: job, isLoading, error } = useJob(jobId);
-  const { data: applications } = useJobApplications(jobId);
-  const transition = useJobTransition(jobId);
 
   if (isLoading) return <Empty>Loading…</Empty>;
   if (error) return <ErrorNotice error={error} />;
   if (!job) return <Empty>Job not found.</Empty>;
+
+  const recruiter = user.role === "recruiter";
 
   return (
     <>
@@ -497,116 +595,22 @@ export function JobDetailPage() {
           <p>{[job.department, job.location].filter(Boolean).join(" · ") || "No location set"}</p>
         </div>
         <span className="spacer" />
-        <div className="button-row">
-          {(job.status === "draft" || job.status === "publish_failed") && (
-            <button
-              type="button"
-              className="primary"
-              disabled={transition.isPending}
-              onClick={() => transition.mutate("publish")}
-            >
-              {job.status === "publish_failed" ? "Retry publishing" : "Publish"}
-            </button>
-          )}
-          {job.status === "processing" && (
-            <button type="button" className="primary" disabled>
-              Publishing…
-            </button>
-          )}
-          {job.status !== "closed" && job.status !== "draft" && (
-            <button type="button" onClick={() => transition.mutate("close")}>
-              Close
-            </button>
-          )}
-          {job.status === "closed" && (
-            <button type="button" onClick={() => transition.mutate("reopen")}>
-              Reopen
-            </button>
-          )}
-        </div>
+        {recruiter && <JobActions job={job} />}
       </div>
-
-      <ErrorNotice error={transition.error} />
 
       <div className="grid-2">
         <div>
-          <div className="panel">
-            <div className="panel-head">
-              <h2>Applications</h2>
-              <span className="spacer" />
-              <span className="muted">{applications?.total ?? 0} total</span>
-            </div>
-
-            {!applications || applications.items.length === 0 ? (
-              <Empty>No applications yet.</Empty>
-            ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Candidate</th>
-                      <th>Stage</th>
-                      <th>Applied</th>
-                      <th title="Match score, 0–100: required skills 60%, experience 25%, other mentioned skills 15%">
-                        Score
-                      </th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {applications.items.map((application) => (
-                      <ApplicationRow key={application.id} application={application} />
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          <ApplyPanel jobId={jobId} jobSkills={job.required_skills ?? []} />
+          {recruiter ? (
+            <ApplicationsPanel jobId={job.id} />
+          ) : (
+            <ApplyPanel job={job} candidateId={user.id} />
+          )}
         </div>
 
         <div>
-          <PublishingPanel job={job} />
-
-          <div className="panel">
-            <div className="panel-head">
-              <h2>Details</h2>
-              <span className="spacer" />
-              <StatusPill status={job.status} />
-            </div>
-
-            <dl className="detail-list">
-              <dt>Employment</dt>
-              <dd>{job.employment_type?.replace("_", " ")}</dd>
-
-              <dt>Min. experience</dt>
-              <dd>
-                {job.min_experience_years} year{job.min_experience_years === 1 ? "" : "s"}
-              </dd>
-
-              <dt>Cap</dt>
-              <dd>{job.max_applications ?? "Unlimited"}</dd>
-
-              <dt>Published</dt>
-              <dd>{formatDate(job.published_at)}</dd>
-
-              <dt>Created</dt>
-              <dd>{formatDate(job.created_at)}</dd>
-
-              <dt>Required skills</dt>
-              <dd>
-                <Tags items={job.required_skills ?? []} />
-              </dd>
-            </dl>
-
-            <h3 style={{ margin: "1.2rem 0 0.4rem" }}>Description</h3>
-            <p className="muted" style={{ whiteSpace: "pre-wrap", margin: 0 }}>
-              {job.description}
-            </p>
-          </div>
-
-          <ContentPanel job={job} />
+          {recruiter && <PublishingPanel job={job} />}
+          <DetailsPanel job={job} />
+          {recruiter && <ContentPanel job={job} />}
         </div>
       </div>
     </>

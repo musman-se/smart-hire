@@ -17,8 +17,13 @@ export type JobUpdate = Schemas["JobUpdate"];
 export type JobStatus = Schemas["JobStatus"];
 
 export type Candidate = Schemas["CandidateRead"];
-export type CandidateCreate = Schemas["CandidateCreate"];
+export type CandidateRegistration = Schemas["CandidateRegistration"];
 export type CandidateUpdate = Schemas["CandidateUpdate"];
+
+export type User = Schemas["UserRead"];
+export type Role = Schemas["Role"];
+export type LoginRequest = Schemas["LoginRequest"];
+export type TokenPair = Schemas["TokenPair"];
 
 export type Application = Schemas["ApplicationRead"];
 export type ApplicationCreate = Schemas["ApplicationCreate"];

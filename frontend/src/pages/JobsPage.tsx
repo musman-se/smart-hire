@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import type { JobFilters } from "../api/resources";
 import { EMPLOYMENT_TYPES, JOB_STATUSES, type JobCreate } from "../api/types";
+import { useUser } from "../auth/AuthProvider";
 import { Empty, ErrorNotice, Modal, Pagination, StatusPill, Tags, formatDate } from "../components/ui";
 import { useCreateJob, useDeleteJob, useJobTransition, useJobs } from "../hooks/queries";
 import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
@@ -170,7 +171,10 @@ function NewJobForm({ onDone }: { onDone: () => void }) {
   );
 }
 
+/** Recruiters manage every job here. Candidates browse the open ones: the server
+ * returns only published jobs to them, so the status filter and actions are hidden. */
 export function JobsPage() {
+  const recruiter = useUser().role === "recruiter";
   const [filters, setFilters] = useState<JobFilters>({
     status: "",
     skill: "",
@@ -194,31 +198,39 @@ export function JobsPage() {
       <div className="page-head">
         <div>
           <h1>Jobs</h1>
-          <p>Create, publish and manage job postings.</p>
+          <p>
+            {recruiter
+              ? "Create, publish and manage job postings."
+              : "Open roles. Pick one to see the details and apply."}
+          </p>
         </div>
         <span className="spacer" />
-        <button type="button" className="primary" onClick={() => setShowNew(true)}>
-          New job
-        </button>
+        {recruiter && (
+          <button type="button" className="primary" onClick={() => setShowNew(true)}>
+            New job
+          </button>
+        )}
       </div>
 
       <div className="panel">
         <div className="filters">
-          <div className="field">
-            <label htmlFor="f-status">Status</label>
-            <select
-              id="f-status"
-              value={filters.status}
-              onChange={(e) => patchFilters({ status: e.target.value as JobFilters["status"] })}
-            >
-              <option value="">All</option>
-              {JOB_STATUSES.map((status) => (
-                <option key={status} value={status}>
-                  {status}
-                </option>
-              ))}
-            </select>
-          </div>
+          {recruiter && (
+            <div className="field">
+              <label htmlFor="f-status">Status</label>
+              <select
+                id="f-status"
+                value={filters.status}
+                onChange={(e) => patchFilters({ status: e.target.value as JobFilters["status"] })}
+              >
+                <option value="">All</option>
+                {JOB_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="field">
             <label htmlFor="f-skill">Skill</label>
@@ -260,12 +272,17 @@ export function JobsPage() {
                     <th>Skills</th>
                     <th>Min. exp</th>
                     <th>Published</th>
-                    <th />
+                    {recruiter && <th />}
                   </tr>
                 </thead>
                 <tbody>
                   {data.items.map((job) => (
-                    <JobRow key={job.id} job={job} onDelete={() => deleteJob.mutate(job.id)} />
+                    <JobRow
+                      key={job.id}
+                      job={job}
+                      manage={recruiter}
+                      onDelete={() => deleteJob.mutate(job.id)}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -292,9 +309,11 @@ export function JobsPage() {
 
 function JobRow({
   job,
+  manage,
   onDelete,
 }: {
   job: import("../api/types").Job;
+  manage: boolean;
   onDelete: () => void;
 }) {
   const transition = useJobTransition(job.id);
@@ -316,43 +335,45 @@ function JobRow({
       </td>
       <td>{job.min_experience_years}y</td>
       <td className="muted">{formatDate(job.published_at)}</td>
-      <td className="actions">
-        <div className="button-row" style={{ justifyContent: "flex-end" }}>
-          {(job.status === "draft" || job.status === "publish_failed") && (
-            <button
-              type="button"
-              className="small"
-              disabled={transition.isPending}
-              onClick={() => transition.mutate("publish")}
-            >
-              {job.status === "publish_failed" ? "Retry" : "Publish"}
+      {manage && (
+        <td className="actions">
+          <div className="button-row" style={{ justifyContent: "flex-end" }}>
+            {(job.status === "draft" || job.status === "publish_failed") && (
+              <button
+                type="button"
+                className="small"
+                disabled={transition.isPending}
+                onClick={() => transition.mutate("publish")}
+              >
+                {job.status === "publish_failed" ? "Retry" : "Publish"}
+              </button>
+            )}
+            {(job.status === "published" || job.status === "processing") && (
+              <button
+                type="button"
+                className="small"
+                disabled={transition.isPending}
+                onClick={() => transition.mutate("close")}
+              >
+                Close
+              </button>
+            )}
+            {job.status === "closed" && (
+              <button
+                type="button"
+                className="small"
+                disabled={transition.isPending}
+                onClick={() => transition.mutate("reopen")}
+              >
+                Reopen
+              </button>
+            )}
+            <button type="button" className="small danger" onClick={onDelete}>
+              Delete
             </button>
-          )}
-          {(job.status === "published" || job.status === "processing") && (
-            <button
-              type="button"
-              className="small"
-              disabled={transition.isPending}
-              onClick={() => transition.mutate("close")}
-            >
-              Close
-            </button>
-          )}
-          {job.status === "closed" && (
-            <button
-              type="button"
-              className="small"
-              disabled={transition.isPending}
-              onClick={() => transition.mutate("reopen")}
-            >
-              Reopen
-            </button>
-          )}
-          <button type="button" className="small danger" onClick={onDelete}>
-            Delete
-          </button>
-        </div>
-      </td>
+          </div>
+        </td>
+      )}
       </tr>
       {transition.error && (
         <tr>
