@@ -52,7 +52,7 @@ date-prefixed only so the folder reads chronologically.
 The database records its own version in a one-row table:
 
 ```sql
-SELECT * FROM alembic_version;   -- b7e3d05a9c12
+SELECT * FROM alembic_version;   -- d5e8a2f41c07
 ```
 
 `alembic upgrade head` reads that row, walks the chain from there to the newest revision
@@ -256,3 +256,45 @@ Inside Compose, migrations run automatically; to run one by hand:
 ```bash
 docker compose run --rm migrate alembic current
 ```
+
+## 10. Seeing it in pgAdmin
+
+Everything above leaves a visible trace in the database. To look at it:
+
+```bash
+docker compose up -d pgadmin     # then http://localhost:5050
+```
+
+Expand **Servers → SmartHire** (it asks once for `POSTGRES_PASSWORD` from `.env`), then
+**Databases → smarthire → Schemas → public**.
+
+| To see | Where |
+|---|---|
+| Which revision the database is at (§2) | **Tables → `alembic_version`** → right-click → *View/Edit Data*. Or **Tools → Query Tool**: `SELECT version_num FROM alembic_version;` |
+| What a revision created | A table's **Columns**, **Constraints** and **Indexes**. Every name follows the convention in §5 (`pk_`, `fk_`, `uq_`, `ck_`, `ix_`), so `fk_candidates_id_users` reads as "candidates.id references users" |
+| The DDL behind a table | Right-click a table → *Scripts → CREATE Script*. Compare it with the revision that made it in `backend/migrations/versions/` |
+| The enum types | **Types**: `job_status`, `application_stage`, `employment_type`, `job_section_kind`, `user_role` |
+| A data migration's result (§6) | *View/Edit Data* on `skills`, or on `users` — every candidate from before authentication has a row there with a NULL `password_hash` |
+
+**The tables worth opening**, roughly in the order a request touches them:
+
+| Table | Holds |
+|---|---|
+| `users` | Accounts: email, Argon2id hash, role |
+| `candidates` | Profiles; `id` is also the account's `users.id` |
+| `refresh_tokens` | One row per live or rotated refresh token — a SHA-256, never the token |
+| `jobs` | Postings and their lifecycle status |
+| `skills`, `job_skills`, `candidate_skills` | The skill vocabulary and who lists what |
+| `job_sections`, `job_keywords`, `job_extracted_skills` | What the publishing workflow extracted |
+| `applications`, `application_stage_changes` | Applications, and every stage move |
+| `notifications` | Every message sent, once each |
+| `alembic_version` | The one row Alembic reads and writes |
+
+**How a migration gets there.** pgAdmin shows the *result*; the steps are §4 and §9. A
+model change, then `alembic revision --autogenerate` drafts a file in
+`migrations/versions/`, which is read and corrected by hand. Then the `migrate` service
+runs `alembic upgrade head` on the next `docker compose up`. To see the exact SQL a
+revision will run before it runs, use `alembic upgrade head --sql`. To watch a schema
+built from nothing, refresh **Databases** while `pytest tests/test_migrations.py` runs:
+it creates and drops `smarthire_test_migrations`. Never `alembic downgrade` the
+`smarthire` database itself — a downgrade drops tables, and the data in them.
