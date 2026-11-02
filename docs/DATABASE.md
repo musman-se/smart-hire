@@ -10,6 +10,8 @@ how concurrent writes are kept correct. The migration mechanics are in
 
 ```mermaid
 erDiagram
+    USERS ||--o| CANDIDATES : "profile of (shared id)"
+    USERS ||--o{ REFRESH_TOKENS : "signed in with"
     JOBS ||--o{ APPLICATIONS : receives
     CANDIDATES ||--o{ APPLICATIONS : submits
     JOBS ||--o{ JOB_SKILLS : requires
@@ -36,9 +38,21 @@ erDiagram
         timestamptz published_at
         timestamptz created_at
     }
-    CANDIDATES {
+    USERS {
         uuid id PK
         string email UK "lowercase, checked"
+        string password_hash "Argon2id; null = cannot sign in"
+        enum role "recruiter | candidate"
+    }
+    REFRESH_TOKENS {
+        uuid id PK
+        uuid user_id FK
+        string token_hash UK "SHA-256, never the token"
+        timestamptz expires_at
+        timestamptz revoked_at "set when used or signed out"
+    }
+    CANDIDATES {
+        uuid id PK, FK "= users.id"
         string full_name "trigram indexed"
         int years_experience
         string resume_url
@@ -159,6 +173,28 @@ queries, not twenty-one.
 - **Enums** (`status`, `stage`, `employment_type`) stay native Postgres enums. They are
   closed sets owned by the code, not data owned by users.
 
+### 2.3 Accounts: one email, one place
+
+Authentication added `users` — email, password hash, role, nothing else. A candidate's
+email had lived on `candidates`; keeping a copy on both tables would store one fact
+twice, free to drift. It moved to `users`, and the API reads it through the profile's
+relationship to its account.
+
+The link is a **shared primary key**: `candidates.id` is the profile's primary key *and*
+a foreign key to `users.id`. Three kinds of key meet in this schema, each doing one job:
+
+| Key | Example | What it guarantees |
+|---|---|---|
+| Primary key | `users.id`, `jobs.id` | One row per id, and the index every lookup by id uses |
+| Foreign key | `applications.candidate_id → candidates.id` | No row points at something missing; `ON DELETE CASCADE` removes the dependents |
+| Composite primary key | `job_skills (job_id, skill_id)` | The *pair* is unique — a job lists a skill once |
+| Primary key that is also a foreign key | `candidates.id → users.id` | One profile per account, by construction |
+
+A separate `candidates.user_id` column would have needed its own unique constraint to
+stay one-to-one, plus an index. The shared key gets both for free, and makes ownership
+one comparison: an application is yours when `candidate_id` equals your user id.
+Deleting the account cascades to the profile, its applications and its refresh tokens.
+
 ## 3. Constraints
 
 The database refuses invalid data itself, whichever client wrote it.
@@ -166,7 +202,9 @@ The database refuses invalid data itself, whichever client wrote it.
 | Constraint | Guarantees |
 |---|---|
 | `uq_applications_job_candidate` | A candidate applies to a job at most once — holds under concurrency |
-| `uq_candidates_email` + `ck_candidates_email_lowercase` | One account per address, case-insensitively |
+| `uq_users_email` + `ck_users_email_lowercase` | One account per address, case-insensitively (on `candidates` before authentication) |
+| `fk_candidates_id_users` | Every profile belongs to exactly one account |
+| `uq_refresh_tokens_token_hash` | A refresh token resolves to one row |
 | `uq_skills_name` + `ck_skills_name_normalised` | One row per skill |
 | `ck_jobs_min_experience_non_negative`, `ck_candidates_years_experience_non_negative` | No negative experience |
 | `ck_jobs_max_applications_positive` | A cap, if set, is at least 1 |
@@ -194,6 +232,13 @@ around the queries the services actually run.
 | `ix_applications_candidate_id_stage` | The active-application count, run on every apply |
 | `ix_applications_job_id_created_at` | A job's applications, newest first |
 | `ix_job_skills_skill_id`, `ix_candidate_skills_skill_id` | "Which jobs need kafka?" — the primary keys only serve lookups by owner |
+| `uq_users_email` | Every sign-in: `WHERE email = ?` |
+| `uq_refresh_tokens_token_hash` | Every refresh and sign-out: `WHERE token_hash = ?` |
+| `ix_refresh_tokens_user_id` | Revoking all of a user's sessions, and `ON DELETE CASCADE` from `users` — without it, both scan the table |
+
+Authentication added three indexes and no more. Two come with unique constraints that
+must exist anyway; the third serves a foreign key that is deleted through. Nothing is
+indexed on `role` or `expires_at`: no query filters on them.
 
 ### 4.1 What changed, and why
 

@@ -5,7 +5,7 @@ Recruiter console for the SmartHire API. React + TypeScript, built with Vite.
 ## Why Vite and not Next.js
 
 FastAPI already owns every server concern — routing, validation, persistence, and
-authentication when it arrives. Next.js earns its keep through SSR, React Server
+authentication. Next.js earns its keep through SSR, React Server
 Components, server actions and a Node server; this app would use none of them, while
 adding a second runtime to operate, containerise and explain.
 
@@ -13,8 +13,7 @@ A Vite SPA compiles to static files served by nginx. The production image ships 
 runtime at all.
 
 **The tradeoff.** No SSR, so no server-rendered HTML for search engines, and the first
-paint waits on the JS bundle. Neither matters for an internal recruiter console behind
-(eventual) authentication. If SmartHire ever needs a public, indexable job board, that is
+paint waits on the JS bundle. Neither matters for a console behind a sign-in. If SmartHire ever needs a public, indexable job board, that is
 the moment to reconsider — and it would be a separate surface, not a rewrite of this one.
 
 ## Stack
@@ -153,10 +152,37 @@ The npm bundled with Node 22.11 also produces lockfiles that crash `npm ci`, whi
 `package-lock.json` is not relied upon in the image build. Both issues disappear on
 Node 22.12+ with npm 11.
 
+## Authentication
+
+Everything except `/login` and `/register` sits behind `RequireAuth`. Candidates create
+their own accounts at `/register`; recruiter accounts come from the backend's CLI (the
+seed creates one — see the root README).
+
+| Piece | Does |
+|---|---|
+| `auth/session.ts` | Holds the tokens. Access token in memory; refresh token in sessionStorage |
+| `api/client.ts` | Sends `Authorization: Bearer`; on a 401, exchanges the refresh token once and retries |
+| `auth/AuthProvider.tsx` | Who is signed in; restores the session on reload; clears the query cache on sign-out |
+| `auth/RequireAuth.tsx` | Redirects to `/login`, remembering the page |
+
+The console is one app for both roles. A recruiter sees every job, the pipeline and the
+candidate list. A candidate sees published jobs, applies as themselves, and follows and
+withdraws their own applications under *My applications*. The role only decides what is
+**shown**; the server decides what is **allowed**, and refuses the rest.
+
+**Why sessionStorage for the refresh token.** It survives a reload of the tab and is
+gone when the tab closes. localStorage is shared by every tab: two tabs rotating one
+refresh token would trip the server's reuse detection and sign both out. The cost is
+that a script injected into the page could read it. React escapes everything it renders
+and this app never sets raw HTML, which is the defence today; an httpOnly cookie, which
+no script can read, is the upgrade path.
+
+**Why the refresh is single-flight.** Several queries can find the access token expired
+at the same moment. If each refreshed on its own, the second would present a refresh
+token the first had just used — and the server would end the session as stolen. They
+share one exchange instead.
+
 ## Not built
 
-No authentication — the API has none yet, so there is no login, no roles, and no route
-guards. When the backend gains auth, this app needs a token store, an `Authorization`
-header in `client.ts`, and recruiter-only routes. No optimistic updates, no tests: with
-the review deadline close, the effort went into the backend suite where the business
-rules live.
+No optimistic updates, no tests: with the review deadline close, the effort went into
+the backend suite where the business rules live.

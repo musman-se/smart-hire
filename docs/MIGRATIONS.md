@@ -153,6 +153,24 @@ The rule: **when the shape of data changes, write the copy step yourself, and ma
 downgrade copy it back.** `test_skills_data_migration_preserves_every_skill` proves both
 directions.
 
+Revision `d5e8a2f41c07` (authentication) is the same pattern with a constraint in the
+middle. Autogenerate proposed: create `users`, add the foreign key `candidates.id →
+users.id`, drop `candidates.email`. On any database with candidates that fails — the
+foreign key cannot be added while profiles point at accounts that do not exist — and
+had it succeeded, every email would have been gone. It also missed the check constraint
+on the email, which autogenerate does not compare at all. The hand-written order:
+
+```text
+upgrade():   1. create users, refresh_tokens
+             2. INSERT INTO users SELECT id, email, NULL, 'CANDIDATE' ... FROM candidates
+             3. add the foreign key        (every profile now has its account)
+             4. drop the email's constraints, then the column
+downgrade(): add email (nullable) → copy it back from users → NOT NULL → constraints
+             → drop the foreign key → drop the tables → drop the user_role enum type
+```
+
+`test_existing_candidates_get_an_account_that_cannot_sign_in` proves both directions.
+
 ## 7. Mistakes found while studying this — and their fixes
 
 All three were invisible to the normal test suite, which builds its schema with

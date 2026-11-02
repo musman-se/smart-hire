@@ -1,7 +1,8 @@
 # SmartHire — Architecture and Design Decisions
 
 **Modules 1 and 2** · Module 1: 21 September 2026, revised after its review ·
-Module 2 (application workflow + publishing pipeline): 18 October 2026
+Module 2 (application workflow + publishing pipeline): 18 October 2026 ·
+Authentication (from the Module 1 review): 2 November 2026
 
 This document covers the service breakdown, data and request flow, and — most of all —
 the decisions taken, the alternatives rejected, and why. Companion documents:
@@ -72,6 +73,8 @@ app/
 │   ├── schemas.py       ReadModel, PatchModel, ErrorResponse
 │   ├── pagination.py    Pagination params and Page[T]
 │   └── logging.py       request-id logging
+├── auth/                models · schemas · service · router · errors · enums
+│                        security (hashing, tokens) · dependencies · cli
 ├── jobs/                models · schemas · service · router · errors · enums
 ├── candidates/          models · schemas · service · router · errors
 ├── applications/        models · schemas · service · router · errors · enums
@@ -89,7 +92,8 @@ Inside each package the same layers apply:
 | `errors.py` | The ways this domain can refuse a request | HTTP beyond a status code |
 
 Dependencies point one way: `applications` uses `jobs` and `candidates`; neither of them
-imports `applications`. Everything may use `core`; `core` uses nothing.
+imports `applications`. Every router uses `auth.dependencies` to learn who is calling;
+`auth` uses no other domain. Everything may use `core`; `core` uses nothing.
 
 The rule that matters: **services raise `DomainError`, never `HTTPException`.** Each
 domain declares its own errors (`jobs/errors.py`: `JobNotOpenError`, ...) on bases from
@@ -107,11 +111,13 @@ sequenceDiagram
     participant S as application_service
     participant DB as PostgreSQL
 
-    C->>MW: POST /jobs/{id}/applications
+    C->>MW: POST /jobs/{id}/applications + Bearer token
     MW->>MW: assign request id
     MW->>R: forward
+    R->>R: verify token, load user — 401 if invalid
+    R->>R: role is candidate? — 403 if not
     R->>R: validate body (Pydantic)
-    R->>S: apply_to_job(session, job_id, payload)
+    R->>S: apply_to_job(session, job_id, user.id, payload)
     S->>DB: load job and candidate
     S->>S: published? eligible? under limits?
     S->>DB: INSERT application
@@ -386,7 +392,7 @@ the duplicate (409) — correct data, a less friendly answer. **For a job, which
 natural unique key, the retry creates a second job.** Closing that window means storing
 the key in Postgres in the same transaction as the row it protects — the upgrade path if
 it ever matters. Only 2xx and 4xx are stored; a 5xx releases the key. Keys are scoped by
-endpoint; once authentication exists they should be scoped per user too.
+endpoint and by user — see §4.25.
 
 The console renews its key once the server has answered: a key belongs to one attempt to
 do one thing, and reusing it after a refusal would replay that refusal for a day.
@@ -410,11 +416,127 @@ retries, compensation and non-retryable failures. The SDK's own test server coul
 downloaded behind this network's TLS inspection, so these tests use the Compose server
 and skip without it — the same approach as Postgres.
 
+### 4.22 Short-lived JWTs, and refresh tokens that rotate
+
+**Decision.** `POST /auth/login` returns an access token — a JWT signed with HS256, valid
+for 15 minutes — and a refresh token: 256 random bits, stored only as a SHA-256 hash in
+`refresh_tokens`. Each refresh token works once; `/auth/refresh` revokes it and issues
+the next pair. Presenting a token that was already used revokes every session the user
+has.
+
+**Alternatives rejected.** Server-side sessions (a session id looked up on every
+request); one long-lived JWT; refresh tokens that are themselves JWTs.
+
+**Why.** The access token is verified with no lookup of the token — the signature is
+the proof — which keeps the hot path cheap. A JWT cannot be revoked, so it is kept short,
+and the revocable part of the session lives in the database where a sign-out can end it.
+Rotation turns a stolen refresh token into a detectable event: the thief and the owner
+both hold it, and the second to use it presents a revoked token. The server cannot tell
+which of them is which, so it ends both sessions; the owner signs in again. The refresh
+token is opaque because nothing needs to read it except this table — a JWT would only
+add a second way to accept it.
+
+**Tradeoff.** Signing out revokes the refresh token, but the access token in hand still
+works until it expires — at most 15 minutes. Revoking access tokens too would mean a
+database lookup of every token on every request, which is the server-side session this
+design avoided. Each request does load the *user* (one primary-key read), so a deleted
+account stops working immediately — §4.25.
+
+The algorithm is fixed in code, not read from the token or from settings: a verifier
+that trusts the token's `alg` header can be talked into `none`. `JWT_SECRET_KEY` has no
+default and must be at least 32 characters — the same rule as the database password.
+
+### 4.23 Argon2id, hashed off the event loop
+
+**Decision.** Passwords are hashed with Argon2id through `pwdlib`, the library FastAPI's
+own documentation now recommends. Hashing and verifying run in a worker thread
+(`asyncio.to_thread`).
+
+**Alternatives rejected.** bcrypt (passlib); a fast hash with a salt.
+
+**Why.** Argon2id is slow and memory-hard on purpose — about 0.1 s and 64 MiB per hash
+here — so each guess against a stolen table costs an attacker what a sign-in costs us.
+bcrypt is still acceptable, but it is not memory-hard and caps passwords at 72 bytes;
+passlib, its usual wrapper, is no longer maintained. That same 0.1 s on the event loop
+would stall every other request, which is why it runs in a thread (argon2-cffi releases
+the GIL, so the threads hash in parallel). An unknown email still pays for one hash, of
+a decoy, so the response time does not reveal which emails are registered. Hashes made
+with weaker parameters are upgraded the next time the password is proved.
+
+### 4.24 A candidate's profile shares its account's primary key
+
+**Decision.** `users` holds credentials only: email, password hash, role.
+`candidates.id` is both the primary key of the profile and a foreign key to `users.id`.
+The email moved from `candidates` to `users`.
+
+**Alternatives rejected.** A `candidates.user_id` column; keeping an email on both
+tables.
+
+**Why.** An email on both tables is the same fact twice, free to disagree — exactly
+the redundancy normalisation removes. With a shared key the one-to-one relationship is
+enforced by the key itself (a second profile would repeat a primary key), there is no
+extra column or index, and ownership is one comparison: an application is yours when
+`application.candidate_id == user.id`. Recruiters have accounts and no profile.
+
+**Migration.** Existing candidates had no accounts. Revision `d5e8a2f41c07` gives each
+one an account with the same id and **no password** — an account that cannot sign in
+until a reset flow exists — and only then adds the foreign key. Inventing passwords
+would have been worse: nobody would know them.
+
+### 4.25 Secure by default; roles at the boundary; 404 for other people's data
+
+**Decision.** `main.py` mounts every domain router with `get_current_user` as a
+router-level dependency. Routes then narrow by role (`RecruiterDep`, `CandidateDep`).
+Only the health probes and `/auth/register|login|refresh|logout` are public, and a test
+sends a request with no token to every other operation in the OpenAPI document.
+
+| | Recruiter | Candidate |
+|---|---|---|
+| Jobs | everything | read published jobs only |
+| Publishing status, extracted content | yes | — |
+| Candidates | read all | read, edit, delete their own |
+| Apply | — | as themselves |
+| Applications | read all, advance, re-process | read their own, withdraw |
+
+**Why.** Protection declared once cannot be forgotten on the next endpoint; protection
+added route by route eventually is. Role checks sit in the routers because *who may ask*
+is an HTTP-boundary concern, while services keep their domain rules and stay callable
+from a Temporal activity. Identity comes from the token, never the body —
+`ApplicationCreate` no longer has a `candidate_id`, so nobody can apply as somebody
+else. Asking for another candidate's profile or application answers **404**, the same
+as for one that does not exist: a 403 would confirm the id is real. Withdrawing is the
+candidate's decision and rejecting the recruiter's, so a recruiter cannot set
+`withdrawn`.
+
+Idempotency records are keyed by user as well as by key. Unscoped, a second user sending
+the same key and body would be answered with the first user's stored response — their
+application.
+
+**Tradeoff.** The user is read from the database on every request — one primary-key
+lookup — in exchange for deletions and role changes taking effect at once.
+`/auth/register` takes no Idempotency-Key: the record stores a hash of the body for a
+day, and a fast hash of a password is not something to keep in a cache.
+
+### 4.26 Recruiters are created from the command line
+
+**Decision.** Candidates register themselves over HTTP. Recruiter accounts are created
+with `python -m app.auth.cli create-recruiter <email>`, which prompts for the password
+(or reads it from stdin, for scripts). The seed service runs it before seeding.
+
+**Why.** An HTTP sign-up for recruiters would let anyone grant themselves every job and
+candidate, and the first recruiter could never be created through an endpoint only
+recruiters may call. Whoever can run a command on the server is already trusted.
+`--exist-ok` never promotes an existing account or resets a password.
+
 ## 5. Gaps
 
 | Gap | Status / where it belongs |
 |---|---|
-| **No authentication** — every endpoint is open | The most significant gap; for the follow-up session. A `CurrentUser` dependency, roles, and identity from the token rather than the request body |
+| ~~**No authentication** — every endpoint is open~~ | Fixed after review — §4.22–4.26 |
+| No password reset or email verification; pre-auth candidates cannot sign in | Needs an email channel — the notifications table is the seam |
+| An access token outlives sign-out by up to 15 minutes | By design (§4.22); a deny-list in Redis if it ever matters |
+| Used and expired refresh tokens accumulate | A periodic purge of rows past `expires_at` |
+| The console keeps the refresh token in sessionStorage, readable by injected script | An httpOnly cookie — [frontend/README.md](../frontend/README.md#authentication) |
 | ~~Publishing is synchronous, no skill extraction~~ | Module 2 — `PublishJobWorkflow` |
 | ~~`match_score` is always null~~ | Module 2 — `ProcessApplicationWorkflow`, rule-based score |
 | ~~Withdrawing deletes the application~~ | Module 2 — `withdrawn` stage + history |
@@ -425,4 +547,4 @@ and skip without it — the same approach as Postgres.
 | Offset pagination drifts under concurrent inserts | Keyset pagination when volume demands it |
 | ~~Unindexed search, redundant indexes~~ | Fixed after review — [DATABASE.md §4](DATABASE.md#4-indexes) |
 | ~~Count-then-insert race on application limits~~ | Fixed after review — row locks |
-| No rate limiting | Before any public exposure |
+| No rate limiting — including sign-in attempts | Before any public exposure; Argon2's cost slows guessing but does not cap it |

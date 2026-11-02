@@ -44,8 +44,8 @@ Module 1 is judged on foundation quality, not surface area.
 
 **Non-goals**
 
-Authentication and authorisation. Every endpoint is currently unauthenticated — see
-[§7 Assumptions](#7-assumptions).
+Authentication and authorisation — *superseded*: added after the Module 1 review, see
+[§11](#11-authentication).
 
 ## 3. Users
 
@@ -140,10 +140,8 @@ Authentication and authorisation. Every endpoint is currently unauthenticated �
 
 ## 7. Assumptions
 
-1. **No authentication.** Recruiter and candidate roles are modelled in the data but not
-   enforced at the boundary. Any client may call any endpoint. This is the largest known
-   gap; it belongs in a later module, and every endpoint would sit behind a dependency
-   resolving the caller.
+1. **No authentication.** *Superseded by [§11](#11-authentication).* Recruiter and
+   candidate roles were modelled in the data but not enforced at the boundary.
 2. **Skill matching is exact-string.** "postgres" and "postgresql" are different skills.
    Semantic matching is the entire point of Module 4 and is deliberately not faked here.
 3. **Eligibility requires one overlapping skill, not all.** Requiring every listed skill
@@ -312,3 +310,47 @@ Design and failure analysis: [WORKFLOWS.md](WORKFLOWS.md). Decisions:
 | NFR-11 | Temporal history + stateless worker | Live: worker stopped mid-publish, restarted → published |
 | NFR-13 | `health.py` readiness | `test_readiness_is_degraded_not_down_without_temporal_or_redis`, `test_readiness_is_503_whatever_the_database_raises`, `test_redis_down_fails_open` |
 
+---
+
+## 11. Authentication
+
+Added 2 November 2026, after the Module 1 review held week 1 open for it. Design and
+tradeoffs: [ARCHITECTURE.md §4.22–4.26](ARCHITECTURE.md#422-short-lived-jwts-and-refresh-tokens-that-rotate).
+
+### 11.1 Use cases
+
+| ID | Use case | Actor | Acceptance |
+|---|---|---|---|
+| UC-A1 | Register | Candidate | Account and profile created together; duplicate email → `duplicate_email`; password 8–128 characters |
+| UC-A2 | Sign in | Candidate, recruiter | Access token + refresh token; a wrong password and an unknown email get the same `invalid_credentials` |
+| UC-A3 | Stay signed in | Candidate, recruiter | `/auth/refresh` exchanges a refresh token for a new pair; each works once |
+| UC-A4 | Sign out | Candidate, recruiter | The refresh token is revoked |
+| UC-A5 | Create a recruiter | Administrator | `python -m app.auth.cli create-recruiter`; never over HTTP |
+| UC-A6 | Delete my account | Candidate | Account, profile and applications removed; existing tokens stop working |
+
+### 11.2 Requirements
+
+| ID | Requirement |
+|---|---|
+| FR-A1 | Every endpoint except health, register, login, refresh and logout requires a valid access token (401 `not_authenticated` / `invalid_token`) |
+| FR-A2 | Recruiters manage jobs, publishing and the hiring pipeline; candidates cannot (403 `forbidden`) |
+| FR-A3 | Candidates see published jobs only, and only their own profile and applications; anything else answers 404 |
+| FR-A4 | The applicant is the signed-in candidate; the request body cannot name another |
+| FR-A5 | Withdrawal is the candidate's action; recruiters reject instead |
+| FR-A6 | Idempotency keys are scoped to the user who sent them |
+| NFR-A1 | Passwords stored only as Argon2id hashes; refresh tokens only as SHA-256 hashes |
+| NFR-A2 | No signing key or password has a default in code; the key is at least 32 characters |
+| NFR-A3 | Password hashing never blocks the event loop |
+| NFR-A4 | Sign-in timing does not reveal whether an email is registered |
+
+### 11.3 Traceability
+
+| Requirement | Code | Tests |
+|---|---|---|
+| FR-A1 | `app/main.py` (router-level dependency), `auth/dependencies.py` | `test_every_other_route_requires_a_token` — one case per operation |
+| FR-A2, FR-A3 | the routers, `auth/dependencies.py` | `test_a_candidate_cannot_do_a_recruiters_work`, `test_a_candidate_cannot_see_another_candidates_data` |
+| FR-A4 | `applications/schemas.py`, `applications/router.py` | `test_the_applicant_is_whoever_the_token_names` |
+| FR-A6 | `core/idempotency.py` | `test_one_key_sent_by_two_users_is_two_actions` |
+| UC-A3 | `auth/service.py` | `test_refreshing_rotates_the_refresh_token`, `test_reusing_a_refresh_token_revokes_every_session` |
+| NFR-A1 | `auth/security.py` | `test_the_password_is_stored_as_an_argon2id_hash`, `test_only_a_hash_of_the_refresh_token_is_stored` |
+| NFR-A2 | `core/config.py` | `test_a_missing_signing_key_fails_at_startup`, `test_a_short_signing_key_fails_at_startup` |

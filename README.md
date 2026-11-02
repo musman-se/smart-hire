@@ -19,8 +19,12 @@ safe with **idempotency keys in Redis**.
 cp .env.example .env          # every setting, with defaults — edit as needed
 cd frontend && npm install && npm run build && cd ..
 docker compose up --build
-docker compose run --rm seed  # demo data, including deliberate rule violations
+docker compose run --rm seed  # a recruiter, demo data, deliberate rule violations
 ```
+
+Sign in at http://localhost:3000 as `recruiter@example.com`, or as any seeded candidate
+(e.g. `ayesha.khan@example.com`), with `SEED_PASSWORD` from `.env`. Candidates can also
+create their own account at `/register`.
 
 | Surface | URL |
 |---|---|
@@ -59,7 +63,7 @@ flowchart LR
 | `temporal` | Workflow engine: records every step, retries, resumes after crashes |
 | `redis` | Idempotency records, with expiry |
 | `web` | The recruiter console, proxying `/api` |
-| `seed` | On demand: `docker compose run --rm seed` |
+| `seed` | On demand: `docker compose run --rm seed` — creates the recruiter, then seeds through the API |
 
 Temporal or Redis being down degrades the platform rather than stopping it: reads and
 applications keep working; publishing waits. See [docs/WORKFLOWS.md](docs/WORKFLOWS.md#5-failure-modes).
@@ -78,7 +82,7 @@ scripts/     seed.py (demo data via the API), index-benchmark/
 | Document | Contents |
 |---|---|
 | [docs/PRD.md](docs/PRD.md) | Use cases, requirements and traceability — Module 1 and Module 2 |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Services, domain packages, 21 design decisions with tradeoffs |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Services, domain packages, 26 design decisions with tradeoffs |
 | [docs/WORKFLOWS.md](docs/WORKFLOWS.md) | The two Temporal workflows, every failure mode, how to watch and demo them |
 | [docs/DATABASE.md](docs/DATABASE.md) | Normalisation, constraints, indexes with measurements, concurrency |
 | [docs/MIGRATIONS.md](docs/MIGRATIONS.md) | How Alembic works here, and the mistakes it caught |
@@ -89,7 +93,7 @@ scripts/     seed.py (demo data via the API), index-benchmark/
 
 ```bash
 docker compose up -d db temporal redis
-cd backend && pytest        # 125 tests: real Postgres, real Temporal, real Redis
+cd backend && pytest        # 202 tests: real Postgres, real Temporal, real Redis
 ruff check .
 cd ../frontend && npm run typecheck
 ```
@@ -100,12 +104,23 @@ Tests needing Temporal or Redis skip with a clear message when those are not run
 
 | Module | Scope | Status |
 |---|---|---|
-| 1 | Foundation + core services | **Complete** — revised after review |
+| 1 | Foundation + core services | **Complete** — revised after review, with authentication |
 | 2 | Application workflow + publishing pipeline (Temporal) | **Complete** |
 | 3 | Event-driven system (Kafka, outbox, analytics) + observability | Next |
 | 4 | Semantic layer — embeddings, vector search | Later |
 | 5 | AI assistant — LangGraph, recommendations | Later |
 
-**Known gap:** there is no authentication. Every endpoint is open. It is the subject of
-the next review session; the design notes are in
-[docs/ARCHITECTURE.md §5](docs/ARCHITECTURE.md#5-gaps).
+## Authentication
+
+Every endpoint except the health probes and `/auth/register|login|refresh|logout` needs a
+signed-in user, declared once for every router rather than route by route. Recruiters
+run the hiring side; candidates see published jobs and only their own profile and
+applications. Short-lived JWT access tokens, refresh tokens that rotate on every use,
+Argon2id password hashes. Recruiter accounts are created from the command line:
+
+```bash
+docker compose exec api python -m app.auth.cli create-recruiter alice@example.com
+```
+
+Design and tradeoffs: [docs/ARCHITECTURE.md §4.22–4.26](docs/ARCHITECTURE.md#422-short-lived-jwts-and-refresh-tokens-that-rotate).
+Remaining gaps (password reset, rate limiting): [§5](docs/ARCHITECTURE.md#5-gaps).
