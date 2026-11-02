@@ -8,7 +8,15 @@
  * so this is the only place in the app that needs to know how failures look. Everything
  * above it catches an ApiError and reads `.code` — a stable identifier — instead of
  * pattern-matching prose.
+ *
+ * It is also the only place that knows about tokens. Every request carries the access
+ * token; when one is refused as expired, the refresh token is exchanged for a new pair
+ * and the request is sent once more. Pages never see an expiry — only a sign-out, when
+ * the refresh token itself is no good.
  */
+
+import { session } from "../auth/session";
+import type { TokenPair } from "./types";
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? "/api";
 
@@ -62,14 +70,100 @@ export function toQuery(params: Record<string, unknown>): string {
   return query ? `?${query}` : "";
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * renewed      a new pair is stored; retry the request
+ * refused      the server rejected the refresh token, or there is none: signed out
+ * unavailable  no answer about the token (a 502 mid-deploy): keep it, try again later
+ */
+export type RefreshOutcome = "renewed" | "refused" | "unavailable";
+
+let refreshing: Promise<RefreshOutcome> | null = null;
+
+/**
+ * Waits before trying again when a refresh got no answer — all well inside the server's
+ * REFRESH_REUSE_GRACE_SECONDS (10). An unanswered attempt may still have rotated the
+ * token on the server. Presented again this soon, it is merely refused (signed out
+ * here); presented after the window — a user pressing "Try again" a minute later — the
+ * server would take it for theft and end every session the user has.
+ */
+const RETRY_DELAYS_MS = [1000, 3000];
+
+async function attemptRefresh(refreshToken: string): Promise<RefreshOutcome> {
+  let tokens: TokenPair;
+  try {
+    const response = await fetch(`${BASE_URL}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (response.status === 401) {
+      session.clear();
+      return "refused";
+    }
+    if (!response.ok) return "unavailable"; // a 502 mid-deploy: no answer about the token
+    tokens = (await response.json()) as TokenPair;
+  } catch {
+    // The network, the API down, or a body that never arrived whole.
+    return "unavailable";
+  }
+  session.store(tokens);
+  return "renewed";
+}
+
+/**
+ * Exchange the refresh token for a new pair. Single-flight: when several requests find
+ * the access token expired at once, they all wait on one exchange. Each would otherwise
+ * present the same refresh token, and the server would refuse all but the first — or,
+ * after a few seconds, treat the repeat as theft and end every session.
+ */
+export function refreshSession(): Promise<RefreshOutcome> {
+  refreshing ??= (async (): Promise<RefreshOutcome> => {
+    const refreshToken = session.refreshToken();
+    if (!refreshToken) return "refused";
+
+    let outcome = await attemptRefresh(refreshToken);
+    for (const delay of RETRY_DELAYS_MS) {
+      if (outcome !== "unavailable") break;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      outcome = await attemptRefresh(refreshToken);
+    }
+    return outcome;
+  })().finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
+}
+
+/** Resolves once any refresh under way has settled. */
+export async function refreshInFlight(): Promise<void> {
+  await refreshing?.catch(() => undefined);
+}
+
+interface RequestOptions extends RequestInit {
+  /** Send no token and never refresh — for the endpoints that hand tokens out. */
+  anonymous?: boolean;
+}
+
+async function request<T>(path: string, init: RequestOptions = {}, isRetry = false): Promise<T> {
+  const { anonymous, ...fetchInit } = init;
+  const token = anonymous ? null : session.accessToken();
   const response = await fetch(`${BASE_URL}${path}`, {
-    ...init,
+    ...fetchInit,
     headers: {
       "Content-Type": "application/json",
-      ...init?.headers,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...fetchInit.headers,
     },
   });
+
+  if (response.status === 401 && !anonymous) {
+    // No access token yet (a reload) or an expired one: renew it, then try once more.
+    // A refresh that got no answer leaves the session alone and reports this 401.
+    const outcome = isRetry ? "refused" : await refreshSession();
+    if (outcome === "renewed") return request<T>(path, init, true);
+    // Refused with a fresh token, or nothing to refresh with: signed out.
+    if (outcome === "refused") session.clear();
+  }
 
   if (!response.ok) {
     throw await toApiError(response);
@@ -103,11 +197,16 @@ export function newIdempotencyKey(): string {
 
 export const api = {
   get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown, options?: { idempotencyKey?: string }) =>
+  post: <T>(
+    path: string,
+    body?: unknown,
+    options?: { idempotencyKey?: string; anonymous?: boolean },
+  ) =>
     request<T>(path, {
       method: "POST",
       body: body ? JSON.stringify(body) : undefined,
       headers: options?.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {},
+      anonymous: options?.anonymous,
     }),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),

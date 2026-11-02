@@ -6,7 +6,7 @@ import type {
   ApplicationCreate,
   ApplicationStage,
   Candidate,
-  CandidateCreate,
+  CandidateRegistration,
   CandidateUpdate,
   Job,
   JobContent,
@@ -17,6 +17,8 @@ import type {
   Page,
   Publication,
   StageChange,
+  TokenPair,
+  User,
 } from "./types";
 
 export interface JobFilters {
@@ -34,6 +36,17 @@ export interface CandidateFilters {
   limit?: number;
   offset?: number;
 }
+
+/** Register, login and logout send no access token: they are how one is obtained. */
+export const authApi = {
+  register: (payload: CandidateRegistration) =>
+    api.post<Candidate>("/auth/register", payload, { anonymous: true }),
+  login: (email: string, password: string) =>
+    api.post<TokenPair>("/auth/login", { email, password }, { anonymous: true }),
+  logout: (refreshToken: string) =>
+    api.post<void>("/auth/logout", { refresh_token: refreshToken }, { anonymous: true }),
+  me: () => api.get<User>("/auth/me"),
+};
 
 export const jobsApi = {
   list: (filters: JobFilters) => api.get<Page<Job>>(`/jobs${toQuery({ ...filters })}`),
@@ -54,11 +67,8 @@ export const candidatesApi = {
   list: (filters: CandidateFilters) =>
     api.get<Page<Candidate>>(`/candidates${toQuery({ ...filters })}`),
   get: (id: string) => api.get<Candidate>(`/candidates/${id}`),
-  create: (payload: CandidateCreate, idempotencyKey?: string) =>
-    api.post<Candidate>("/candidates", payload, { idempotencyKey }),
   update: (id: string, payload: CandidateUpdate) =>
     api.patch<Candidate>(`/candidates/${id}`, payload),
-  remove: (id: string) => api.delete<void>(`/candidates/${id}`),
 };
 
 export const applicationsApi = {
@@ -75,7 +85,8 @@ export const applicationsApi = {
     api.post<Application>(`/jobs/${jobId}/applications`, payload, { idempotencyKey }),
   advance: (id: string, stage: ApplicationStage, note?: string) =>
     api.post<Application>(`/applications/${id}/stage`, { stage, note: note || null }),
-  /** Not a delete: the application moves to `withdrawn` and keeps its history. */
+  /** The candidate's own action. Not a delete: the application moves to `withdrawn`
+   * and keeps its history. */
   withdraw: (id: string) => api.delete<void>(`/applications/${id}`),
   history: (id: string) => api.get<StageChange[]>(`/applications/${id}/history`),
   notifications: (id: string) => api.get<Notification[]>(`/applications/${id}/notifications`),

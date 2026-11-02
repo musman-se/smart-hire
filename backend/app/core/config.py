@@ -21,6 +21,10 @@ from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
+# The key .env.example ships with. Fine on a laptop; refused when ENVIRONMENT=production.
+# tests/test_hardening.py checks the two copies agree.
+EXAMPLE_JWT_SECRET_KEY = "local-development-only-replace-me-0123456789abcdef"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -67,6 +71,24 @@ class Settings(BaseSettings):
     # Recycle connections older than this, before a firewall or proxy silently drops
     # an idle one. -1 disables recycling.
     db_pool_recycle_seconds: int = -1
+
+    # --- Authentication --------------------------------------------------------------
+    # The key that signs access tokens. No default, like POSTGRES_PASSWORD: anyone who
+    # knows it can mint a token for any user, so it must never be in the code. At least
+    # 32 characters; generate one with
+    #   python -c "import secrets; print(secrets.token_urlsafe(48))"
+    jwt_secret_key: SecretStr | None = None
+    # An access token cannot be revoked before it expires, so it is kept short. The
+    # refresh token, which can be revoked, carries the session between them.
+    access_token_minutes: int = Field(default=15, ge=1, le=60)
+    refresh_token_days: int = Field(default=14, ge=1, le=90)
+    # A refresh token presented again this soon after it was rotated is refused, but not
+    # taken for theft: it is almost always its own client — a retry after a lost
+    # response, or a page reloaded mid-refresh. Later than this, every session ends.
+    refresh_reuse_grace_seconds: int = Field(default=10, ge=0, le=60)
+    # Threads that hash passwords (Argon2id: ~0.1 s of CPU and 64 MiB each). Sign-ins
+    # beyond this many at once queue rather than take more CPU and memory.
+    password_hash_workers: int = Field(default=4, ge=1, le=32)
 
     # --- Temporal (workflow orchestration) ------------------------------------------
     # host:port of the Temporal server's gRPC frontend. Compose overrides it to
@@ -140,6 +162,22 @@ class Settings(BaseSettings):
                 "POSTGRES_PASSWORD is not set. Copy .env.example to .env at the repository "
                 "root, or set POSTGRES_PASSWORD (or DATABASE_URL) in the environment"
             )
+        if self.jwt_secret_key is None:
+            raise ValueError(
+                "JWT_SECRET_KEY is not set. Add it to .env at the repository root (see "
+                ".env.example), or set it in the environment"
+            )
+        # HS256 is only as strong as its key; a short one can be brute-forced offline from
+        # any token the attacker holds.
+        if len(self.jwt_secret_key.get_secret_value()) < 32:
+            raise ValueError("JWT_SECRET_KEY must be at least 32 characters")
+        # The example key is public — it is in the repository — so in production it would
+        # let anyone mint a token for any user.
+        if (
+            self.environment == "production"
+            and self.jwt_secret_key.get_secret_value() == EXAMPLE_JWT_SECRET_KEY
+        ):
+            raise ValueError("JWT_SECRET_KEY is the example value from .env.example")
         # A demo setting that is harmless locally and wrong in production: failing here
         # beats discovering it from publishes that fail on purpose.
         if self.environment == "production" and self.publishing_fault_rate > 0:

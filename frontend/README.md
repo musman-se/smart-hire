@@ -1,11 +1,12 @@
 # SmartHire — Frontend
 
-Recruiter console for the SmartHire API. React + TypeScript, built with Vite.
+The SmartHire console — for recruiters and candidates alike. React + TypeScript, built
+with Vite.
 
 ## Why Vite and not Next.js
 
 FastAPI already owns every server concern — routing, validation, persistence, and
-authentication when it arrives. Next.js earns its keep through SSR, React Server
+authentication. Next.js earns its keep through SSR, React Server
 Components, server actions and a Node server; this app would use none of them, while
 adding a second runtime to operate, containerise and explain.
 
@@ -13,8 +14,7 @@ A Vite SPA compiles to static files served by nginx. The production image ships 
 runtime at all.
 
 **The tradeoff.** No SSR, so no server-rendered HTML for search engines, and the first
-paint waits on the JS bundle. Neither matters for an internal recruiter console behind
-(eventual) authentication. If SmartHire ever needs a public, indexable job board, that is
+paint waits on the JS bundle. Neither matters for a console behind a sign-in. If SmartHire ever needs a public, indexable job board, that is
 the moment to reconsider — and it would be a separate surface, not a rewrite of this one.
 
 ## Stack
@@ -121,13 +121,17 @@ src/
 ├── api/
 │   ├── schema.d.ts    generated — do not edit
 │   ├── types.ts       friendly aliases over the generated types
-│   ├── client.ts      fetch wrapper, error envelope, ApiError
+│   ├── client.ts      fetch wrapper, error envelope, ApiError, token refresh
 │   └── resources.ts   one function per endpoint, no React
+├── auth/
+│   ├── session.ts        where the tokens live
+│   ├── AuthProvider.tsx  who is signed in
+│   └── RequireAuth.tsx   the route guard
 ├── hooks/
 │   ├── queries.ts            TanStack Query hooks, cache keys, polling rules
 │   └── useIdempotencyKey.ts  one key per intended action
 ├── components/        Layout, pills, modal, pagination, error notice
-└── pages/             Jobs, JobDetail, Candidates, CandidateDetail
+└── pages/             Login, Register, Jobs, JobDetail, Candidates, CandidateDetail
 ```
 
 `resources.ts` has no React in it, so the API layer is testable and reusable without
@@ -153,10 +157,51 @@ The npm bundled with Node 22.11 also produces lockfiles that crash `npm ci`, whi
 `package-lock.json` is not relied upon in the image build. Both issues disappear on
 Node 22.12+ with npm 11.
 
+## Authentication
+
+Everything except `/login` and `/register` sits behind `RequireAuth`. Candidates create
+their own accounts at `/register`; recruiter accounts come from the backend's CLI (the
+seed creates one — see the root README).
+
+| Piece | Does |
+|---|---|
+| `auth/session.ts` | Holds the tokens in memory; parks the refresh token in sessionStorage across a reload |
+| `api/client.ts` | Sends `Authorization: Bearer`; on a 401, exchanges the refresh token once and retries. Signs out only when the server *refuses* the refresh — not when it is unreachable |
+| `auth/AuthProvider.tsx` | Who is signed in; restores the session on reload; clears the query cache on sign-out |
+| `auth/RequireAuth.tsx` | Redirects to `/login`, remembering the page — except after the sign-out button, when the next person may be someone else |
+
+The console is one app for both roles. A recruiter sees every job, the pipeline and the
+candidate list. A candidate sees published jobs, applies as themselves, and follows and
+withdraws their own applications under *My applications*. The role only decides what is
+**shown**; the server decides what is **allowed**, and refuses the rest.
+
+**Where the refresh token lives.** In memory while the tab is open. On `pagehide` it is
+parked in sessionStorage, and the next page load takes it back out and deletes it — so
+a reload keeps you signed in. The care is about two tabs: each refresh token works
+once; the server refuses a second use, and after a few seconds treats it as theft and
+ends every session the user has.
+localStorage is shared by every tab, so tabs would race to use one token; and "Duplicate
+tab" copies sessionStorage — which is why the token is never left there while a tab is
+open. A duplicated tab starts signed out instead of racing the original. So does a tab
+the browser discards to save memory — it gets no `pagehide` to park the token in.
+
+If a refresh gets no answer (a deploy, a network blip), the console tries again after 1
+and 3 seconds — inside the server's 10-second grace window, so if the unanswered attempt
+did rotate the token, the retry is merely refused rather than taken for theft. If there
+is still no answer, it says so and offers a retry instead of the sign-in form: usually
+the token is still good. A page restored from the back/forward cache re-establishes its
+session from the parked token, with an empty cache — it may belong to someone else.
+
+The cost: a script injected into the page could read the token. React escapes
+everything it renders and this app never sets raw HTML, which is the defence today; an
+httpOnly cookie, which no script can read, is the upgrade path.
+
+**Why the refresh is single-flight.** Several queries can find the access token expired
+at the same moment. If each refreshed on its own, the second would present a refresh
+token the first had just used — and the server would refuse it, or a few seconds later
+end every session as stolen. They share one exchange instead.
+
 ## Not built
 
-No authentication — the API has none yet, so there is no login, no roles, and no route
-guards. When the backend gains auth, this app needs a token store, an `Authorization`
-header in `client.ts`, and recruiter-only routes. No optimistic updates, no tests: with
-the review deadline close, the effort went into the backend suite where the business
-rules live.
+No optimistic updates, no tests: with the review deadline close, the effort went into
+the backend suite where the business rules live.

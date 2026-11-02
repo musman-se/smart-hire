@@ -1,24 +1,38 @@
 """Candidate business logic."""
 
+import logging
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.candidates.errors import CandidateNotFoundError, DuplicateEmailError
+from app.auth.enums import Role
+from app.auth.errors import DuplicateEmailError
+from app.auth.models import User
+from app.auth.security import hash_password
+from app.candidates.errors import CandidateNotFoundError
 from app.candidates.models import Candidate
-from app.candidates.schemas import CandidateCreate, CandidateUpdate
+from app.candidates.schemas import CandidateRegistration, CandidateUpdate
 from app.skills.models import Skill
 from app.skills.service import resolve_skills
+
+logger = logging.getLogger(__name__)
 
 
 async def get_candidate(
     session: AsyncSession, candidate_id: uuid.UUID, *, lock: bool = False
 ) -> Candidate:
-    """Load a candidate, optionally row-locked until the transaction ends (see get_job)."""
+    """Load a candidate, optionally row-locked until the transaction ends (see get_job).
+
+    The lock is taken `of` the candidates table only. The account is joined into the
+    same SELECT, and a bare FOR NO KEY UPDATE would lock its users row as well.
+    """
     candidate = await session.get(
-        Candidate, candidate_id, with_for_update={"key_share": True} if lock else None
+        Candidate,
+        candidate_id,
+        with_for_update={"key_share": True, "of": Candidate} if lock else None,
+        populate_existing=lock,
     )
     if candidate is None:
         raise CandidateNotFoundError(candidate_id)
@@ -54,21 +68,38 @@ async def list_candidates(
     return list(rows), total
 
 
-async def create_candidate(session: AsyncSession, payload: CandidateCreate) -> Candidate:
-    candidate = Candidate(**payload.model_dump(exclude={"skills"}))
+async def register_candidate(session: AsyncSession, payload: CandidateRegistration) -> Candidate:
+    """Create a candidate's account and profile together, in one transaction.
+
+    Neither exists without the other: a failure anywhere — a duplicate email, say —
+    rolls both back.
+    """
+    # Hashed before the transaction starts, so no pooled connection waits on the hasher.
+    password_hash = await hash_password(payload.password.get_secret_value())
+
+    user = User(
+        id=uuid.uuid4(), email=payload.email, password_hash=password_hash, role=Role.CANDIDATE
+    )
+    candidate = Candidate(
+        id=user.id,
+        user=user,  # the relationship is what orders the INSERTs: users first
+        **payload.model_dump(exclude={"email", "password", "skills"}),
+    )
     candidate.skill_set = await resolve_skills(session, payload.skills)
     session.add(candidate)
 
     try:
         await session.commit()
     except IntegrityError as exc:
-        # The unique index on email is what actually guarantees this. A SELECT-then-INSERT
-        # check would let two concurrent registrations both pass the check and race.
+        # The unique index on users.email is what actually guarantees this. A
+        # SELECT-then-INSERT check would let two concurrent registrations both pass the
+        # check and race.
         await session.rollback()
-        raise DuplicateEmailError(
-            f"A candidate with email {payload.email} already exists."
-        ) from exc
+        # The message names no email: domain errors are logged, and an address is
+        # personal data.
+        raise DuplicateEmailError("An account with this email already exists.") from exc
 
+    logger.info("candidate_registered id=%s", candidate.id)
     return candidate
 
 
@@ -88,6 +119,9 @@ async def update_candidate(
 
 
 async def delete_candidate(session: AsyncSession, candidate_id: uuid.UUID) -> None:
-    candidate = await get_candidate(session, candidate_id)
-    await session.delete(candidate)
+    """Delete the account, not just the profile. ON DELETE CASCADE then removes the
+    profile, its applications and its refresh tokens — deleting only the profile would
+    leave an account that can still sign in, attached to nothing."""
+    await get_candidate(session, candidate_id)
+    await session.execute(delete(User).where(User.id == candidate_id))
     await session.commit()

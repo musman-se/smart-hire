@@ -21,7 +21,6 @@ import {
   TERMINAL_STAGES,
   type ApplicationCreate,
   type ApplicationStage,
-  type CandidateCreate,
   type JobCreate,
   type JobUpdate,
 } from "../api/types";
@@ -143,25 +142,6 @@ export function useCandidates(filters: CandidateFilters) {
 
 export function useCandidate(id: string) {
   return useQuery({ queryKey: keys.candidate(id), queryFn: () => candidatesApi.get(id) });
-}
-
-export function useCreateCandidate() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: CandidateCreate) => candidatesApi.create(payload),
-    onSuccess: () => client.invalidateQueries({ queryKey: keys.candidates }),
-  });
-}
-
-export function useDeleteCandidate() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => candidatesApi.remove(id),
-    onSuccess: () => {
-      client.invalidateQueries({ queryKey: keys.candidates });
-      client.invalidateQueries({ queryKey: keys.applications });
-    },
-  });
 }
 
 // --- Applications ----------------------------------------------------------------

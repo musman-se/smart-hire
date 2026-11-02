@@ -56,11 +56,14 @@ async def test_the_database_itself_refuses_a_duplicate(session: AsyncSession) ->
     guarantee comes from the unique constraint rather than from the Python pre-check.
     Two simultaneous requests can both pass that pre-check; neither can pass this.
     """
+    from app.auth.enums import Role
+    from app.auth.models import User
     from app.candidates.models import Candidate
     from app.jobs.models import Job
 
     job = Job(title="Race Condition Role", description="Testing the unique constraint.")
-    candidate = Candidate(email=f"race-{uuid.uuid4().hex[:8]}@example.com", full_name="Racer")
+    user = User(email=f"race-{uuid.uuid4().hex[:8]}@example.com", role=Role.CANDIDATE)
+    candidate = Candidate(user=user, full_name="Racer")
     session.add_all([job, candidate])
     await session.commit()
 
@@ -89,25 +92,31 @@ async def test_applying_to_a_different_job_is_allowed(client: AsyncClient) -> No
 # --- Rule 2: eligibility ---------------------------------------------------------
 
 
-async def test_draft_job_does_not_accept_applications(client: AsyncClient) -> None:
+async def test_a_draft_job_does_not_exist_to_a_candidate(client: AsyncClient) -> None:
+    """404, as GET /jobs/{id} answers: a 409 would confirm the unpublished job is real."""
     job = await make_job(client, publish=False)
     candidate = await make_candidate(client)
 
     response = await apply(client, job, candidate)
 
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "job_not_open"
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
 
 
 async def test_closed_job_does_not_accept_applications(client: AsyncClient) -> None:
+    """Answered as GET /jobs/{id} answers each candidate: an applicant still sees the
+    closed job, so is told it is closed; anyone else is told it does not exist."""
     job = await make_job(client)
-    candidate = await make_candidate(client)
+    applicant, bystander = await make_candidate(client), await make_candidate(client)
+    await apply(client, job, applicant)
     await client.post(f"/jobs/{job['id']}/close")
 
-    response = await apply(client, job, candidate)
+    again = await apply(client, job, applicant)
+    stranger = await apply(client, job, bystander)
 
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "job_not_open"
+    assert again.status_code == 409
+    assert again.json()["error"]["code"] == "job_not_open"
+    assert stranger.status_code == 404
 
 
 async def test_insufficient_experience_is_not_eligible(client: AsyncClient) -> None:
@@ -371,7 +380,7 @@ async def test_withdrawing_keeps_the_application_and_its_history(client: AsyncCl
     candidate = await make_candidate(client)
     application = (await apply(client, job, candidate)).json()
 
-    response = await client.delete(f"/applications/{application['id']}")
+    response = await client.delete(f"/applications/{application['id']}", headers=candidate["auth"])
 
     assert response.status_code == 204
     kept = await client.get(f"/applications/{application['id']}")
@@ -393,7 +402,7 @@ async def test_withdrawing_frees_a_slot_but_not_the_same_job(
     second = await make_job(client, title="Second", min_experience_years=0)
     application = (await apply(client, first, candidate)).json()
 
-    await client.delete(f"/applications/{application['id']}")
+    await client.delete(f"/applications/{application['id']}", headers=candidate["auth"])
 
     again = await apply(client, first, candidate)
     assert again.status_code == 409  # withdrawal is final for that job
@@ -408,7 +417,7 @@ async def test_a_hired_application_cannot_be_withdrawn(client: AsyncClient) -> N
     for stage in ("screening", "interview", "offer", "hired"):
         await client.post(f"/applications/{application['id']}/stage", json={"stage": stage})
 
-    response = await client.delete(f"/applications/{application['id']}")
+    response = await client.delete(f"/applications/{application['id']}", headers=candidate["auth"])
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "invalid_stage_transition"

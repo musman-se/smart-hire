@@ -42,7 +42,11 @@ const RULE_COPY: Record<string, { title: string; rule: boolean }> = {
   job_capacity_reached: { title: "This job is full", rule: true },
   job_not_open: { title: "Job is not accepting applications", rule: true },
   invalid_stage_transition: { title: "That stage change is not allowed", rule: true },
-  duplicate_email: { title: "Email already registered", rule: true },
+  duplicate_email: { title: "Email already registered — sign in instead", rule: true },
+  invalid_credentials: { title: "Could not sign in", rule: false },
+  not_authenticated: { title: "Signed out", rule: false },
+  invalid_token: { title: "Your session has ended", rule: false },
+  forbidden: { title: "Not allowed for your role", rule: true },
   workflow_unavailable: { title: "The workflow engine is unavailable", rule: false },
   idempotency_in_progress: { title: "Still processing your first attempt", rule: true },
   idempotency_key_reused: { title: "Request changed since the first attempt", rule: false },
@@ -57,7 +61,7 @@ export function ErrorNotice({ error }: { error: unknown }) {
   if (error instanceof ApiError) {
     const copy = RULE_COPY[error.code];
     return (
-      <div className={`notice ${copy?.rule ? "notice-rule" : "notice-error"}`}>
+      <div className={`notice ${copy?.rule ? "notice-rule" : "notice-error"}`} role="alert">
         <strong>{copy?.title ?? "Request failed"}</strong>
         {error.message}
         {error.requestId && (
@@ -71,7 +75,7 @@ export function ErrorNotice({ error }: { error: unknown }) {
   }
 
   return (
-    <div className="notice notice-error">
+    <div className="notice notice-error" role="alert">
       <strong>Could not reach the API</strong>
       {error instanceof Error ? error.message : String(error)}
     </div>

@@ -10,10 +10,11 @@ from app.core.schemas import InputModel, ReadModel
 
 
 class ApplicationCreate(InputModel):
-    """The job is taken from the URL (POST /jobs/{job_id}/applications), so it is not
-    repeated in the body — two sources for one value invites them to disagree."""
+    """Neither the job nor the candidate is in the body. The job comes from the URL
+    (POST /jobs/{job_id}/applications), and the candidate from the access token: a body
+    field would let anyone apply as anyone, and two sources for one value invite them to
+    disagree."""
 
-    candidate_id: uuid.UUID
     cover_letter: str | None = Field(default=None, max_length=5000)
 
 

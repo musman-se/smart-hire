@@ -81,13 +81,41 @@ python -m app.worker              # in a second terminal, with Temporal running
 
 ## API
 
-All paths, with the interactive version at `/docs`.
+All paths, with the interactive version at `/docs` (sign in with `/auth/login`, then
+paste the access token into **Authorize**).
+
+### Authentication
+
+Every endpoint needs `Authorization: Bearer <access token>` except these, and the
+health probes:
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/auth/register` | A candidate creates their account and profile. Does not sign in |
+| POST | `/auth/login` | Email + password → access token (15 min) + refresh token |
+| POST | `/auth/refresh` | Refresh token → a new pair. Each refresh token works once |
+| POST | `/auth/logout` | End the session: its refresh token is deleted |
+| GET | `/auth/me` | The signed-in user (requires a token) |
+
+Recruiters are not created over HTTP:
+
+```bash
+docker compose exec api python -m app.auth.cli create-recruiter alice@example.com
+```
+
+**Roles.** A recruiter manages jobs, publishing and the hiring pipeline, and reads every
+candidate and application. A candidate reads published jobs, applies as themselves, and
+reads, edits and withdraws only their own profile and applications — without the match
+score or the recruiter's stage notes. A closed job stays readable to the candidates who
+applied to it. Another user's profile or application, or a job a candidate could never
+have seen, answers 404, as if it did not exist. Full table:
+[ARCHITECTURE.md §4.25](../docs/ARCHITECTURE.md#425-secure-by-default-roles-at-the-boundary-404-for-other-peoples-data).
 
 ### Jobs
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/jobs` | List. Filters: `status`, `skill`, `search`, `limit`, `offset` |
+| GET | `/jobs` | List. Filters: `status`, `skill`, `search`, `limit`, `offset`. Candidates get published jobs only |
 | POST | `/jobs` | Create — always as a draft |
 | GET | `/jobs/{job_id}` | Fetch one |
 | PATCH | `/jobs/{job_id}` | Partial update; unsent fields untouched |
@@ -102,29 +130,32 @@ All paths, with the interactive version at `/docs`.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/candidates` | List. Filters: `skill`, `search`, `min_experience` |
-| POST | `/candidates` | Register |
-| GET | `/candidates/{candidate_id}` | Fetch one |
-| PATCH | `/candidates/{candidate_id}` | Update profile (email excluded) |
-| DELETE | `/candidates/{candidate_id}` | Delete |
+| GET | `/candidates` | List (recruiters). Filters: `skill`, `search`, `min_experience` |
+| GET | `/candidates/{candidate_id}` | Fetch one — a candidate only their own |
+| PATCH | `/candidates/{candidate_id}` | Update your profile (email excluded) |
+| DELETE | `/candidates/{candidate_id}` | Delete your account, profile and applications |
+
+A candidate's id is their account's id, so `/auth/me` gives it. Registering is
+`POST /auth/register`.
 
 ### Applications
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/jobs/{job_id}/applications` | Apply — enforces all three rules |
+| POST | `/jobs/{job_id}/applications` | Apply as the signed-in candidate — enforces all three rules |
 | GET | `/jobs/{job_id}/applications` | Applications for one job |
-| GET | `/applications` | List. Filters: `job_id`, `candidate_id`, `stage` |
+| GET | `/applications` | List. Filters: `job_id`, `candidate_id`, `stage`. A candidate gets their own |
 | GET | `/applications/{application_id}` | Fetch one |
 | POST | `/applications/{application_id}/stage` | Advance through the pipeline |
-| DELETE | `/applications/{application_id}` | Withdraw — moves to `withdrawn`, keeps the row |
+| DELETE | `/applications/{application_id}` | Withdraw (the candidate) — moves to `withdrawn`, keeps the row |
 | GET | `/applications/{application_id}/history` | Every stage change, oldest first |
 | GET | `/applications/{application_id}/notifications` | Messages sent about it |
 | POST | `/applications/{application_id}/process` | **202** — (re)run scoring and the confirmation |
 
-`POST /jobs`, `POST /candidates` and `POST /jobs/{job_id}/applications` accept an
-`Idempotency-Key` header: a retry with the same key and body gets the original response
-(marked `Idempotent-Replayed: true`) and performs nothing twice.
+`POST /jobs` and `POST /jobs/{job_id}/applications` accept an `Idempotency-Key` header:
+a retry with the same key and body, from the same user, gets the original response
+(marked `Idempotent-Replayed: true`) and performs nothing twice. Registration does not:
+its body carries a password — see `app/auth/router.py`.
 
 ### Skills
 
@@ -164,8 +195,13 @@ request and in the `X-Request-ID` response header.
 | Code | HTTP | Meaning |
 |---|---|---|
 | `validation_error` | 422 | Request body or query failed schema validation |
-| `not_found` | 404 | No such job, candidate, or application |
-| `duplicate_email` | 409 | Candidate email already registered |
+| `not_authenticated` | 401 | No access token |
+| `invalid_token` | 401 | Access token forged, expired, or its user deleted — refresh, then sign in |
+| `invalid_credentials` | 401 | Wrong email or password (one answer for both) |
+| `invalid_refresh_token` | 401 | Refresh token unknown, expired or already used — sign in |
+| `forbidden` | 403 | Your role cannot do this |
+| `not_found` | 404 | No such job, candidate, or application — or not yours to see |
+| `duplicate_email` | 409 | An account with this email already exists |
 | `duplicate_application` | 409 | Candidate already applied to this job |
 | `job_not_open` | 409 | The job's state refuses it: applying to a job that is not `published`, editing one that is `processing` or `closed`, publishing a closed job, reopening one that is not closed |
 | `not_eligible` | 422 | Experience or skills do not meet the job's requirements |
@@ -212,6 +248,8 @@ app/
 ├── health.py          Liveness and readiness (Postgres, Temporal, Redis)
 ├── core/              config, db, base models, errors, schemas, pagination, logging,
 │                      temporal client, redis client, idempotency
+├── auth/              users and refresh tokens · security (hashing, JWTs) ·
+│                      dependencies (who is calling) · router · cli
 ├── jobs/              models · schemas · service · router · errors · enums
 ├── publishing/        content analysis · activities · workflow · publisher · router
 ├── candidates/        models · schemas · service · router · errors
@@ -234,7 +272,7 @@ docker compose up -d db     # the suite needs a real Postgres
 pytest
 ```
 
-125 tests. They run against a `smarthire_test` database, created on demand, whose tables
+215 tests. They run against a `smarthire_test` database, created on demand, whose tables
 are dropped at the end; `test_migrations.py` replays the whole migration history against its own
 scratch database. Deliberately not SQLite: the unique constraint, array containment and native
 enums either behave differently there or do not exist, and a suite that passes on a
@@ -259,7 +297,7 @@ alembic check               # fail if models and migrations disagree
 
 | Module | Scope | Status |
 |---|---|---|
-| 1 | Foundation + core services | **Complete** |
+| 1 | Foundation + core services | **Complete** — authentication added after review |
 | 2 | Application workflow + publishing pipeline | **Complete** — see [docs/WORKFLOWS.md](../docs/WORKFLOWS.md) |
 | 3 | Event-driven system + observability | Next |
 | 4 | Semantic layer — embeddings, vector search | Later |

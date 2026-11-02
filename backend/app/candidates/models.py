@@ -1,23 +1,32 @@
 """Candidate model."""
 
+import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Index, Integer, String
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.models import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.core.models import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from app.applications.models import Application
+    from app.auth.models import User
     from app.skills.models import Skill
 
 
-class Candidate(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+class Candidate(Base, TimestampMixin):
     __tablename__ = "candidates"
 
-    # Unique at the database level, not just checked in Python. Two concurrent
-    # registrations with the same address cannot both succeed.
-    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+    # The primary key is also a foreign key: a candidate's id *is* their account's id.
+    # That makes the relationship one-to-one by construction — a second profile for one
+    # account would repeat the primary key — and needs no extra column or index.
+    # Deleting the account deletes the profile, and with it every application.
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
 
     full_name: Mapped[str] = mapped_column(String(160), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(32))
@@ -28,6 +37,11 @@ class Candidate(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     resume_url: Mapped[str | None] = mapped_column(String(500))
+
+    # Many-to-one, so lazy="joined": the account comes back in the same SELECT as the
+    # profile, as an INNER JOIN because every candidate has one. The email the API
+    # shows is the account's — stored once, on users.
+    user: Mapped["User"] = relationship(lazy="joined", innerjoin=True)
 
     applications: Mapped[list["Application"]] = relationship(
         back_populates="candidate",
@@ -45,11 +59,6 @@ class Candidate(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __table_args__ = (
         CheckConstraint("years_experience >= 0", name="years_experience_non_negative"),
-        # The API lowercases emails before they reach the database, which is what makes
-        # the unique constraint case-insensitive in practice. This makes the database
-        # enforce it too: "Ayesha@x.com" cannot be written by any client, so it can never
-        # sit beside "ayesha@x.com" as a second account.
-        CheckConstraint("email = lower(email)", name="email_lowercase"),
         # Default listing order, newest first.
         Index("ix_candidates_created_at", "created_at"),
         # Name search is ILIKE '%term%' — see ix_jobs_title_trgm.
@@ -66,5 +75,10 @@ class Candidate(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         """Skill names, which is what the API exposes — CandidateRead reads this."""
         return [skill.name for skill in self.skill_set]
 
+    @property
+    def email(self) -> str:
+        """The account's email — CandidateRead reads this, and notifications use it."""
+        return self.user.email
+
     def __repr__(self) -> str:
-        return f"<Candidate {self.id} {self.email!r}>"
+        return f"<Candidate {self.id} {self.full_name!r}>"

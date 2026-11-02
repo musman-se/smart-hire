@@ -14,7 +14,10 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from temporalio.exceptions import ApplicationError
 
-from app.core.config import Settings
+from app.applications import service as application_service
+from app.applications.enums import ApplicationStage
+from app.applications.errors import InvalidStageTransitionError
+from app.core.config import EXAMPLE_JWT_SECRET_KEY, Settings
 from app.core.db import get_session
 from app.core.temporal import WorkflowUnavailableError
 from app.jobs.models import Job
@@ -153,6 +156,32 @@ async def test_application_read_has_no_phantom_note_field(client: AsyncClient) -
     assert "note" not in application
 
 
+async def test_a_locked_load_rereads_a_row_already_in_the_session(
+    client: AsyncClient, engine
+) -> None:
+    """Withdrawing first reads the application unlocked, to check it is the caller's.
+    session.get with a lock still returned that cached copy: a recruiter's rejection
+    committed in between went unseen, and the withdrawal overwrote it."""
+    job = await make_job(client)
+    candidate = await make_candidate(client)
+    application_id = uuid.UUID((await apply(client, job, candidate)).json()["id"])
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with sessions() as candidates_request:
+        cached = await application_service.get_application(candidates_request, application_id)
+        assert cached.stage is ApplicationStage.APPLIED
+        async with sessions() as recruiters_request:
+            await application_service.advance_stage(
+                recruiters_request, application_id, ApplicationStage.REJECTED
+            )
+
+        with pytest.raises(InvalidStageTransitionError):
+            await application_service.withdraw_application(candidates_request, application_id)
+
+    stage = (await client.get(f"/applications/{application_id}")).json()["stage"]
+    assert stage == "rejected"
+
+
 # --- input validation: 422, never 500 ----------------------------------------------------
 
 
@@ -205,7 +234,9 @@ async def test_an_absurd_offset_is_a_validation_error(client: AsyncClient) -> No
 # --- platform ------------------------------------------------------------------------------
 
 
-async def test_a_500_still_carries_its_request_id(engine, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_500_still_carries_its_request_id(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The middleware used to reset the id before Starlette built the 500 response, so
     the one error that most needs correlating carried request_id: null."""
     from app.jobs import service
@@ -215,7 +246,9 @@ async def test_a_500_still_carries_its_request_id(engine, monkeypatch: pytest.Mo
 
     monkeypatch.setattr(service, "list_jobs", explode)
     transport = ASGITransport(app=app, raise_app_exceptions=False)
-    async with AsyncClient(transport=transport, base_url="http://test") as raw:
+    async with AsyncClient(
+        transport=transport, base_url="http://test", headers=client.headers
+    ) as raw:
         response = await raw.get("/jobs", headers={"X-Request-ID": "trace-123"})
 
     assert response.status_code == 500
@@ -254,6 +287,10 @@ async def test_readiness_is_503_whatever_the_database_raises(engine) -> None:
     assert response.status_code == 503
 
 
+# A key that passes the length check, for Settings built without the .env file.
+JWT_KEY = "k" * 32
+
+
 def test_inconsistent_page_sizes_fail_at_startup() -> None:
     with pytest.raises(ValidationError, match="DEFAULT_PAGE_SIZE"):
         Settings(_env_file=None, default_page_size=500, max_page_size=100)
@@ -270,6 +307,7 @@ def test_production_refuses_injected_faults() -> None:
             _env_file=None,
             environment="production",
             postgres_password="a-real-secret",
+            jwt_secret_key=JWT_KEY,
             publishing_fault_rate=0.3,
         )
 
@@ -285,4 +323,35 @@ def test_a_missing_database_password_fails_at_startup(monkeypatch: pytest.Monkey
 def test_a_full_database_url_needs_no_separate_password(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
     url = "postgresql+asyncpg://app:secret@db.internal:5432/smarthire"
-    assert Settings(_env_file=None, DATABASE_URL=url).database_url == url
+    assert Settings(_env_file=None, DATABASE_URL=url, jwt_secret_key=JWT_KEY).database_url == url
+
+
+def test_a_missing_signing_key_fails_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Like the database password, the key that signs tokens has no default in code.
+    monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+    with pytest.raises(ValidationError, match="JWT_SECRET_KEY is not set"):
+        Settings(_env_file=None, postgres_password="a-real-secret")
+
+
+def test_production_refuses_the_example_signing_key() -> None:
+    with pytest.raises(ValidationError, match="example value"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            postgres_password="a-real-secret",
+            jwt_secret_key=EXAMPLE_JWT_SECRET_KEY,
+        )
+
+
+def test_the_refused_example_key_is_the_one_in_env_example() -> None:
+    """Two copies of one value: if .env.example's changed alone, production would
+    accept the new example key."""
+    from pathlib import Path
+
+    example = Path(__file__).resolve().parents[2] / ".env.example"
+    assert f"JWT_SECRET_KEY={EXAMPLE_JWT_SECRET_KEY}" in example.read_text(encoding="utf-8")
+
+
+def test_a_short_signing_key_fails_at_startup() -> None:
+    with pytest.raises(ValidationError, match="at least 32 characters"):
+        Settings(_env_file=None, postgres_password="a-real-secret", jwt_secret_key="k" * 31)

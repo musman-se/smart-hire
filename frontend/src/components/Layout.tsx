@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 
+import { useAuth, useUser } from "../auth/AuthProvider";
 import { useReadiness } from "../hooks/queries";
 
 /**
@@ -33,6 +34,45 @@ function HealthBadge() {
   );
 }
 
+/** Recruiters manage candidates; a candidate has only their own profile. */
+function Navigation() {
+  const user = useUser();
+  const linkClass = ({ isActive }: { isActive: boolean }) => (isActive ? "active" : "");
+
+  return (
+    <nav className="nav">
+      <NavLink to="/jobs" className={linkClass}>
+        Jobs
+      </NavLink>
+      {user.role === "recruiter" ? (
+        <NavLink to="/candidates" className={linkClass}>
+          Candidates
+        </NavLink>
+      ) : (
+        <NavLink to={`/candidates/${user.id}`} className={linkClass}>
+          My applications
+        </NavLink>
+      )}
+    </nav>
+  );
+}
+
+function UserMenu() {
+  const user = useUser();
+  const { signOut } = useAuth();
+
+  return (
+    <span className="user-menu">
+      <span className="muted" title={user.email}>
+        {user.email} · {user.role}
+      </span>
+      <button type="button" className="small ghost" onClick={() => void signOut()}>
+        Sign out
+      </button>
+    </span>
+  );
+}
+
 export function Layout() {
   return (
     <div className="app">
@@ -40,16 +80,10 @@ export function Layout() {
         <span className="brand">
           Smart<span>Hire</span>
         </span>
-        <nav className="nav">
-          <NavLink to="/jobs" className={({ isActive }) => (isActive ? "active" : "")}>
-            Jobs
-          </NavLink>
-          <NavLink to="/candidates" className={({ isActive }) => (isActive ? "active" : "")}>
-            Candidates
-          </NavLink>
-        </nav>
+        <Navigation />
         <div className="topbar-right">
           <HealthBadge />
+          <UserMenu />
         </div>
       </header>
 

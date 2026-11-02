@@ -33,10 +33,30 @@ class DomainError(Exception):
 
     status_code: int = status.HTTP_400_BAD_REQUEST
     code: str = "domain_error"
+    # Response headers the status code requires — WWW-Authenticate on a 401.
+    headers: dict[str, str] | None = None
 
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message = message
+
+
+class UnauthorizedError(DomainError):
+    """The caller has not proved who they are: no token, or one that does not verify.
+
+    401 must carry WWW-Authenticate (RFC 9110), naming the scheme the client should use.
+    """
+
+    status_code = status.HTTP_401_UNAUTHORIZED
+    code = "not_authenticated"
+    headers = {"WWW-Authenticate": "Bearer"}
+
+
+class ForbiddenError(DomainError):
+    """The caller is known, but their role does not allow this."""
+
+    status_code = status.HTTP_403_FORBIDDEN
+    code = "forbidden"
 
 
 class NotFoundError(DomainError):
@@ -79,7 +99,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def handle_domain_error(_: Request, exc: DomainError) -> JSONResponse:
         # Expected failures — logged at info, because they are the system working.
         logger.info("domain_error code=%s message=%s", exc.code, exc.message)
-        return _error_response(exc.status_code, exc.code, exc.message)
+        return _error_response(exc.status_code, exc.code, exc.message, exc.headers)
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:

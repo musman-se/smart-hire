@@ -10,6 +10,11 @@ guaranteed to satisfy every rule the API enforces, and running it doubles as a s
 The target is, in order: the first argument, then SMARTHIRE_API_URL, then
 http://localhost:8000. Compose sets SMARTHIRE_API_URL for the seed service.
 
+It signs in as the recruiter SEED_RECRUITER_EMAIL (default recruiter@example.com) with
+SEED_PASSWORD, which must already exist — the Compose seed service creates it first with
+`python -m app.auth.cli create-recruiter`. Every demo candidate is registered with the
+same SEED_PASSWORD, so you can sign in to the console as any of them.
+
 Safe to re-run — anything that already exists is reported and skipped.
 """
 
@@ -27,6 +32,9 @@ BASE = (
     if len(sys.argv) > 1
     else os.environ.get("SMARTHIRE_API_URL", "http://localhost:8000")
 ).rstrip("/")
+RECRUITER_EMAIL = os.environ.get("SEED_RECRUITER_EMAIL", "recruiter@example.com")
+# No default: a password is never baked into the code, not even a demo one.
+PASSWORD = os.environ.get("SEED_PASSWORD", "")
 
 JOBS = [
     {
@@ -108,12 +116,17 @@ CANDIDATES = [
 ]
 
 
-def call(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+def call(
+    method: str, path: str, body: dict | None = None, token: str | None = None
+) -> tuple[int, dict]:
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(
         f"{BASE}{path}",
         method=method,
         data=json.dumps(body).encode() if body is not None else None,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(request) as response:
@@ -131,18 +144,25 @@ def code_of(payload: dict) -> str:
     return payload.get("error", {}).get("code", "?")
 
 
-def publish_and_wait(job: dict, timeout: float = 60) -> dict:
+def sign_in(email: str) -> str | None:
+    """An access token, or None. It lasts ACCESS_TOKEN_MINUTES — 15 by default, longer
+    than a seed run unless set near its 1-minute minimum."""
+    status, tokens = call("POST", "/auth/login", {"email": email, "password": PASSWORD})
+    return tokens["access_token"] if status == 200 else None
+
+
+def publish_and_wait(job: dict, token: str, timeout: float = 60) -> dict:
     """Publishing answers 202 and runs as a workflow; wait for it to finish.
 
     Exactly what any client of a 202 endpoint must do: a job is not open for
     applications until the workflow has moved it from processing to published.
     """
-    status, accepted = call("POST", f"/jobs/{job['id']}/publish")
+    status, accepted = call("POST", f"/jobs/{job['id']}/publish", token=token)
     if status != 202:
         return accepted
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        _, current = call("GET", f"/jobs/{job['id']}")
+        _, current = call("GET", f"/jobs/{job['id']}", token=token)
         if current.get("status") != "processing":
             return current
         time.sleep(0.5)
@@ -158,9 +178,21 @@ def main() -> None:
         print("API is not healthy — aborting.")
         raise SystemExit(1)
 
+    if not PASSWORD:
+        print("SEED_PASSWORD is not set — export it (Compose passes it from .env).")
+        raise SystemExit(1)
+    recruiter = sign_in(RECRUITER_EMAIL)
+    if recruiter is None:
+        print(
+            f"Cannot sign in as {RECRUITER_EMAIL}. Create the recruiter first:\n"
+            f"  python -m app.auth.cli create-recruiter {RECRUITER_EMAIL}\n"
+            "(`docker compose run --rm seed` does this for you.)"
+        )
+        raise SystemExit(1)
+
     # Jobs, unlike candidate emails, have no natural unique key, so re-running would
     # duplicate them. Skip any title that already exists.
-    _, existing = call("GET", "/jobs?limit=100")
+    _, existing = call("GET", "/jobs?limit=100", token=recruiter)
     existing_titles = {job["title"] for job in existing.get("items", [])}
 
     jobs: list[dict] = []
@@ -169,29 +201,39 @@ def main() -> None:
         if spec["title"] in existing_titles:
             print(f"  job  {spec['title']:<28} skipped (already exists)")
             continue
-        status, job = call("POST", "/jobs", spec)
+        status, job = call("POST", "/jobs", spec, token=recruiter)
         if status != 201:
             print(f"  job  {spec['title']:<28} skipped ({code_of(job)})")
             continue
         if publish:
-            job = publish_and_wait(job)
+            job = publish_and_wait(job, recruiter)
         jobs.append(job)
         print(f"  job  {job['title']:<28} {job['status']}")
 
     candidates: list[dict] = []
+    tokens: dict[str, str] = {}
     for spec in CANDIDATES:
-        status, candidate = call("POST", "/candidates", spec)
+        # Candidates register themselves; the recruiter cannot create them.
+        status, candidate = call("POST", "/auth/register", spec | {"password": PASSWORD})
         if status != 201:
             print(f"  cand {spec['full_name']:<28} skipped ({code_of(candidate)})")
             continue
         candidates.append(candidate)
+        tokens[candidate["full_name"]] = sign_in(spec["email"]) or ""
         print(f"  cand {candidate['full_name']:<28} {candidate['years_experience']}y")
 
+    if not candidates:
+        print(
+            "\nEvery candidate already has an account. Ones created before authentication"
+            "\nhave no password and cannot sign in: `docker compose down -v` and re-seed for"
+            "\na full demo (it deletes the local database)."
+        )
     if not jobs or not candidates:
         print("\nNothing new to apply with.")
         return
 
-    print("\nApplications (rule violations below are expected and intentional):")
+    print("\nApplications, each made by the candidate signed in")
+    print("(rule violations below are expected and intentional):")
     by_title = {job["title"]: job for job in jobs}
     by_name = {c["full_name"]: c for c in candidates}
 
@@ -202,20 +244,20 @@ def main() -> None:
         ("Senior Backend Engineer", "Ayesha Khan"),   # duplicate -> 409
         ("Senior Backend Engineer", "Sara Iqbal"),    # too junior -> 422
         ("Frontend Engineer", "Omar Farooq"),         # no matching skill -> 422
-        ("Engineering Manager", "Ayesha Khan"),       # draft job -> 409
+        ("Engineering Manager", "Ayesha Khan"),       # draft job -> 404, unseen
     ]
 
     for title, name in attempts:
         job, candidate = by_title.get(title), by_name.get(name)
         if not job or not candidate:
             continue
-        status, result = call(
-            "POST", f"/jobs/{job['id']}/applications", {"candidate_id": candidate["id"]}
-        )
+        # No candidate_id in the body: the applicant is whoever the token names.
+        status, result = call("POST", f"/jobs/{job['id']}/applications", {}, token=tokens[name])
         outcome = result.get("stage", code_of(result))
         print(f"  {name:<14} -> {title:<28} {status} {outcome}")
 
-    print("\nDone. Open http://localhost:3000")
+    print(f"\nDone. Open http://localhost:3000 and sign in as {RECRUITER_EMAIL},")
+    print("or as any candidate above, with SEED_PASSWORD.")
 
 
 if __name__ == "__main__":

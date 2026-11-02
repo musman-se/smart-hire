@@ -1,11 +1,40 @@
 import { Link, useParams } from "react-router-dom";
 
-import { TERMINAL_STAGES } from "../api/types";
+import { TERMINAL_STAGES, type Application } from "../api/types";
+import { useUser } from "../auth/AuthProvider";
 import { Empty, ErrorNotice, StagePill, Tags, formatDate } from "../components/ui";
-import { useCandidate, useCandidateApplications } from "../hooks/queries";
+import {
+  useCandidate,
+  useCandidateApplications,
+  useWithdrawApplication,
+} from "../hooks/queries";
 
+/** Withdrawing is the candidate's own decision, so only they get the button. */
+function WithdrawButton({ application }: { application: Application }) {
+  const withdraw = useWithdrawApplication();
+  if (TERMINAL_STAGES.has(application.stage)) return null;
+
+  return (
+    <>
+      <button
+        type="button"
+        className="small ghost"
+        disabled={withdraw.isPending}
+        onClick={() => withdraw.mutate(application.id)}
+      >
+        Withdraw
+      </button>
+      <ErrorNotice error={withdraw.error} />
+    </>
+  );
+}
+
+/** A recruiter's view of any candidate, and a candidate's view of themselves — the
+ * server answers 404 to a candidate asking for anyone else. */
 export function CandidateDetailPage() {
   const { candidateId = "" } = useParams();
+  const user = useUser();
+  const isSelf = user.id === candidateId;
   const { data: candidate, isLoading, error } = useCandidate(candidateId);
   const { data: applications } = useCandidateApplications(candidateId);
 
@@ -19,9 +48,11 @@ export function CandidateDetailPage() {
 
   return (
     <>
-      <div className="breadcrumb">
-        <Link to="/candidates">Candidates</Link> / {candidate.full_name}
-      </div>
+      {user.role === "recruiter" && (
+        <div className="breadcrumb">
+          <Link to="/candidates">Candidates</Link> / {candidate.full_name}
+        </div>
+      )}
 
       <div className="page-head">
         <div>
@@ -41,7 +72,11 @@ export function CandidateDetailPage() {
           </div>
 
           {!applications || applications.items.length === 0 ? (
-            <Empty>This candidate has not applied to anything yet.</Empty>
+            <Empty>
+              {isSelf
+                ? "You have not applied to anything yet. Browse Jobs to apply."
+                : "This candidate has not applied to anything yet."}
+            </Empty>
           ) : (
             <div className="table-wrap">
               <table>
@@ -50,6 +85,7 @@ export function CandidateDetailPage() {
                     <th>Job</th>
                     <th>Stage</th>
                     <th>Applied</th>
+                    {isSelf && <th />}
                   </tr>
                 </thead>
                 <tbody>
@@ -64,6 +100,11 @@ export function CandidateDetailPage() {
                         <StagePill stage={application.stage} />
                       </td>
                       <td className="muted">{formatDate(application.created_at)}</td>
+                      {isSelf && (
+                        <td className="actions">
+                          <WithdrawButton application={application} />
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

@@ -1,21 +1,39 @@
-"""Candidate endpoints."""
+"""Candidate endpoints.
+
+There is no POST here: a candidate profile is created with its account, by
+POST /auth/register. The rest follows one rule — recruiters read every profile, and a
+candidate reads and changes only their own.
+"""
 
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Request, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Query, status
 
+from app.auth.dependencies import CandidateDep, CurrentUserDep, require_recruiter
+from app.auth.enums import Role
 from app.candidates import service as candidate_service
-from app.candidates.schemas import CandidateCreate, CandidateRead, CandidateUpdate
+from app.candidates.errors import CandidateNotFoundError
+from app.candidates.schemas import CandidateRead, CandidateUpdate
 from app.core.db import SessionDep
-from app.core.idempotency import IdempotencyDep, IdempotencyKey
 from app.core.pagination import Page, PaginationDep
 
 router = APIRouter()
 
 
-@router.get("", response_model=Page[CandidateRead], summary="List candidates")
+def _check_own(user_id: uuid.UUID, candidate_id: uuid.UUID) -> None:
+    """Someone else's profile answers 404, not 403. A 403 would confirm the id exists —
+    letting anyone holding a list of ids learn which belong to real candidates."""
+    if user_id != candidate_id:
+        raise CandidateNotFoundError(candidate_id)
+
+
+@router.get(
+    "",
+    response_model=Page[CandidateRead],
+    summary="List candidates",
+    dependencies=[Depends(require_recruiter)],
+)
 async def list_candidates(
     session: SessionDep,
     pagination: PaginationDep,
@@ -34,49 +52,38 @@ async def list_candidates(
     return Page[CandidateRead].of(candidates, total, pagination)
 
 
-@router.post(
-    "",
+@router.get(
+    "/{candidate_id}",
     response_model=CandidateRead,
-    status_code=status.HTTP_201_CREATED,
-    summary="Register a candidate",
+    summary="Get one candidate",
+    description="A recruiter may read any profile; a candidate only their own.",
 )
-async def create_candidate(
-    session: SessionDep,
-    idempotency: IdempotencyDep,
-    request: Request,
-    payload: CandidateCreate,
-    idempotency_key: IdempotencyKey = None,
-) -> JSONResponse:
-    async def create() -> CandidateRead:
-        return CandidateRead.model_validate(
-            await candidate_service.create_candidate(session, payload)
-        )
-
-    return await idempotency.run(
-        key=idempotency_key,
-        request=request,
-        body=payload,
-        status_code=status.HTTP_201_CREATED,
-        operation=create,
-    )
-
-
-@router.get("/{candidate_id}", response_model=CandidateRead, summary="Get one candidate")
-async def get_candidate(session: SessionDep, candidate_id: uuid.UUID) -> CandidateRead:
+async def get_candidate(
+    session: SessionDep, user: CurrentUserDep, candidate_id: uuid.UUID
+) -> CandidateRead:
+    if user.role is Role.CANDIDATE:
+        _check_own(user.id, candidate_id)
     candidate = await candidate_service.get_candidate(session, candidate_id)
     return CandidateRead.model_validate(candidate)
 
 
-@router.patch("/{candidate_id}", response_model=CandidateRead, summary="Update a profile")
+@router.patch("/{candidate_id}", response_model=CandidateRead, summary="Update your profile")
 async def update_candidate(
-    session: SessionDep, candidate_id: uuid.UUID, payload: CandidateUpdate
+    session: SessionDep, user: CandidateDep, candidate_id: uuid.UUID, payload: CandidateUpdate
 ) -> CandidateRead:
-    candidate = await candidate_service.update_candidate(session, candidate_id, payload)
-    return CandidateRead.model_validate(candidate)
+    _check_own(user.id, candidate_id)
+    updated = await candidate_service.update_candidate(session, candidate_id, payload)
+    return CandidateRead.model_validate(updated)
 
 
 @router.delete(
-    "/{candidate_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete a candidate"
+    "/{candidate_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete your account",
+    description="Deletes the account, the profile and every application, irreversibly.",
 )
-async def delete_candidate(session: SessionDep, candidate_id: uuid.UUID) -> None:
+async def delete_candidate(
+    session: SessionDep, user: CandidateDep, candidate_id: uuid.UUID
+) -> None:
+    _check_own(user.id, candidate_id)
     await candidate_service.delete_candidate(session, candidate_id)

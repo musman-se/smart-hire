@@ -182,13 +182,28 @@ services:
         condition: service_healthy
 
   # Demo data, on demand: `docker compose run --rm seed`. The "tools" profile keeps it
-  # out of a plain `docker compose up`. It goes through the HTTP API like any client,
-  # so it needs no database access and no backend dependencies — only the stdlib.
+  # out of a plain `docker compose up`.
+  # Two steps. First the recruiter account, through the CLI — recruiters cannot sign
+  # up over HTTP, so the first one can only be made here; --exist-ok makes a re-run
+  # harmless. Then seed.py, which goes through the HTTP API like any client: it signs
+  # in as that recruiter, and registers and applies as each candidate.
+  # The backend image, because the first step needs the backend code and database.
   seed:
-    image: python:3.13-slim
+    <<: *backend
     profiles: ["tools"]
-    command: python /scripts/seed.py
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        : "$${SEED_PASSWORD:?is not set - add it to .env, see .env.example}"
+        email="$${SEED_RECRUITER_EMAIL:-recruiter@example.com}"
+        printf %s "$$SEED_PASSWORD" |
+          python -m app.auth.cli create-recruiter "$$email" --password-stdin --exist-ok
+        python /scripts/seed.py
     environment:
+      <<: *backend-environment
       SMARTHIRE_API_URL: http://api:8000
     volumes:
       - ./scripts:/scripts:ro
