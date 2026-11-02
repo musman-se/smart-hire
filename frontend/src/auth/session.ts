@@ -49,10 +49,24 @@ function park(): void {
 
 // pagehide fires on reload, navigation away and tab close — unlike beforeunload, also
 // on mobile and when the page enters the back/forward cache. Coming back from that
-// cache does not reload this module, so the parked token is taken back on pageshow.
+// cache does not reload this module, so the parked token is taken back on pageshow —
+// and only the parked one. What this page held in memory may have been used since by
+// a later page in this tab, or ended by a sign-out there; presenting it would look
+// like theft. Nothing parked means signed out. The access token goes too: the session
+// it belonged to may be over.
+//
+// A tab the browser discards to save memory, or a mobile OS kills in the background,
+// gets no pagehide and comes back signed out. Parking earlier (on freeze, or when the
+// tab is hidden) would leave the token in storage while the tab lives — exactly what
+// lets a duplicated tab share it.
 window.addEventListener("pagehide", park);
 window.addEventListener("pageshow", (event) => {
-  if (event.persisted) refreshToken = takeParkedToken() ?? refreshToken;
+  if (!event.persisted) return;
+  const hadSession = accessToken !== null || refreshToken !== null;
+  refreshToken = takeParkedToken();
+  accessToken = null;
+  // The UI still shows whoever was signed in when the page was cached; tell it.
+  if (refreshToken === null && hadSession) signOutListeners.forEach((listener) => listener());
 });
 
 export const session = {

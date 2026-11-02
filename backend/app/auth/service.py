@@ -7,9 +7,10 @@ every job and candidate to anyone who asked. They are created from the command l
 """
 
 import logging
+import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,20 +76,42 @@ async def login(session: AsyncSession, payload: LoginRequest) -> TokenPair:
     return await _issue_tokens(session, user)
 
 
+async def _end_every_session(session: AsyncSession, user_id: uuid.UUID) -> None:
+    """The response to a stolen refresh token: delete every live one the user has.
+
+    Deleted, not marked: `revoked_at` must keep meaning "rotated". Marked, the tokens
+    ended here would later look like rotated ones, and each old device presenting its
+    token would end the user's *new* sessions all over again.
+    """
+    await session.execute(
+        delete(RefreshToken).where(
+            RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None)
+        )
+    )
+    await session.commit()
+    logger.warning("refresh_token_reused user=%s — every session ended", user_id)
+
+
+def _rotated_just_now(token: RefreshToken, now: datetime) -> bool:
+    """Rotated within the grace period. Its own client presenting it again — a retry
+    after a lost response, or a page reloaded while its refresh was in flight — is not
+    a theft, and ending every session for it would punish the owner."""
+    assert token.revoked_at is not None
+    return now - token.revoked_at <= timedelta(seconds=settings.refresh_reuse_grace_seconds)
+
+
 async def refresh(session: AsyncSession, raw_token: str) -> TokenPair:
     """Exchange a refresh token for a new pair. Each refresh token works once.
 
     Rotation is what makes a stolen refresh token detectable. The thief and the owner
-    both hold it; whichever uses it second presents a token that is already revoked.
-    The server cannot tell which of them is which, so it revokes every session the user
+    both hold it; whichever uses it second presents a token that is already rotated.
+    The server cannot tell which of them is which, so it ends every session the user
     has: the thief is locked out, and the owner simply signs in again.
 
-    Only a *rotated* token counts as reuse. Signing out deletes the row instead (see
-    logout), so presenting a signed-out token is just an unknown one. An expired token
-    is refused before the reuse check: it could not have been used by anyone anyway.
-
-    The price of having no grace period: a client whose refresh succeeded but whose
-    response was lost, and which retries with the old token, ends all its sessions.
+    Only a token *rotated* longer ago than REFRESH_REUSE_GRACE_SECONDS counts as reuse.
+    Within that window, a second presentation is just refused. Signed-out and ended
+    tokens are deleted, so they are simply unknown. An expired token is refused before
+    the reuse check: it could not have been used by anyone anyway.
     """
     # Locked, so two refreshes racing with one token are applied one after the other:
     # the second sees the first's revocation, rather than both issuing new pairs.
@@ -107,13 +130,10 @@ async def refresh(session: AsyncSession, raw_token: str) -> TokenPair:
         raise InvalidRefreshTokenError()
 
     if stored.revoked_at is not None:
-        await session.execute(
-            update(RefreshToken)
-            .where(RefreshToken.user_id == stored.user_id, RefreshToken.revoked_at.is_(None))
-            .values(revoked_at=now)
-        )
-        await session.commit()
-        logger.warning("refresh_token_reused user=%s — every session revoked", stored.user_id)
+        if _rotated_just_now(stored, now):
+            await session.rollback()
+        else:
+            await _end_every_session(session, stored.user_id)
         raise InvalidRefreshTokenError()
 
     stored.revoked_at = now
@@ -132,18 +152,29 @@ async def logout(session: AsyncSession, raw_token: str) -> None:
 
     Deleted, not marked revoked: a revoked row means "rotated", and presenting one is
     treated as theft (see refresh). A token from a tab that signed out is not stolen.
-    A rotated token is left alone here — deleting it would erase the evidence.
+
+    Signing out with a token that was rotated outside the grace period means someone
+    else rotated it — and holds the live session it became. That is reuse, answered as
+    refresh answers it: every session ends, the thief's included.
 
     The access token stays valid until it expires — minutes, by design. Revoking those
     too would mean a database lookup of every token on every request.
     """
-    await session.execute(
-        delete(RefreshToken).where(
-            RefreshToken.token_hash == hash_refresh_token(raw_token),
-            RefreshToken.revoked_at.is_(None),
-        )
+    stored = await session.scalar(
+        select(RefreshToken)
+        .where(RefreshToken.token_hash == hash_refresh_token(raw_token))
+        .with_for_update()
     )
-    await session.commit()
+    if stored is None:
+        await session.rollback()
+        return
+    if stored.revoked_at is None:
+        await session.delete(stored)
+        await session.commit()
+    elif _rotated_just_now(stored, datetime.now(UTC)):
+        await session.rollback()
+    else:
+        await _end_every_session(session, stored.user_id)
 
 
 async def create_recruiter(session: AsyncSession, email: str, password: str) -> User:

@@ -324,7 +324,7 @@ tradeoffs: [ARCHITECTURE.md §4.22–4.26](ARCHITECTURE.md#422-short-lived-jwts-
 | UC-A1 | Register | Candidate | Account and profile created together; duplicate email → `duplicate_email`; password 8–128 characters |
 | UC-A2 | Sign in | Candidate, recruiter | Access token + refresh token; a wrong password and an unknown email get the same `invalid_credentials` |
 | UC-A3 | Stay signed in | Candidate, recruiter | `/auth/refresh` exchanges a refresh token for a new pair; each works once |
-| UC-A4 | Sign out | Candidate, recruiter | The refresh token is revoked |
+| UC-A4 | Sign out | Candidate, recruiter | The session's refresh token is deleted; signing out with an already-rotated one ends every session |
 | UC-A5 | Create a recruiter | Administrator | `python -m app.auth.cli create-recruiter`; never over HTTP |
 | UC-A6 | Delete my account | Candidate | Account, profile and applications removed; existing tokens stop working |
 
@@ -351,6 +351,6 @@ tradeoffs: [ARCHITECTURE.md §4.22–4.26](ARCHITECTURE.md#422-short-lived-jwts-
 | FR-A2, FR-A3 | the routers, `auth/dependencies.py` | `test_a_candidate_cannot_do_a_recruiters_work`, `test_a_candidate_cannot_see_another_candidates_data`, `test_the_recruiters_score_and_notes_are_not_shown_to_the_candidate`, `test_a_job_you_applied_to_stays_readable_after_it_closes` |
 | FR-A4 | `applications/schemas.py`, `applications/router.py` | `test_the_applicant_is_whoever_the_token_names` |
 | FR-A6 | `core/idempotency.py` | `test_one_key_sent_by_two_users_is_two_actions` |
-| UC-A3, UC-A4 | `auth/service.py` | `test_refreshing_rotates_the_refresh_token`, `test_reusing_a_refresh_token_revokes_every_session`, `test_a_signed_out_token_is_not_treated_as_stolen` |
+| UC-A3, UC-A4 | `auth/service.py` | `test_refreshing_rotates_the_refresh_token`, `test_reusing_a_refresh_token_revokes_every_session`, `test_a_token_presented_again_moments_after_rotating_is_not_theft`, `test_old_devices_cannot_end_the_sessions_signed_in_after_a_theft`, `test_a_signed_out_token_is_not_treated_as_stolen`, `test_signing_out_with_a_token_someone_else_rotated_ends_every_session` |
 | NFR-A1 | `auth/security.py` | `test_the_password_is_stored_as_an_argon2id_hash`, `test_only_a_hash_of_the_refresh_token_is_stored` |
 | NFR-A2 | `core/config.py` | `test_a_missing_signing_key_fails_at_startup`, `test_a_short_signing_key_fails_at_startup`, `test_production_refuses_the_example_signing_key` |

@@ -181,7 +181,12 @@ a reload keeps you signed in. The care is about two tabs: each refresh token wor
 once, and the server treats a second use as theft and ends every session the user has.
 localStorage is shared by every tab, so tabs would race to use one token; and "Duplicate
 tab" copies sessionStorage — which is why the token is never left there while a tab is
-open. A duplicated tab starts signed out instead of racing the original.
+open. A duplicated tab starts signed out instead of racing the original. So does a tab
+the browser discards to save memory — it gets no `pagehide` to park the token in.
+
+If the API does not answer while a session is being restored (a deploy, a network
+blip), the console says so and offers a retry instead of the sign-in form: the token is
+still good.
 
 The cost: a script injected into the page could read the token. React escapes
 everything it renders and this app never sets raw HTML, which is the defence today; an

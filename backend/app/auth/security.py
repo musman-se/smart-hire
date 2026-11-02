@@ -90,8 +90,9 @@ async def verify_password(password: str, stored_hash: str | None) -> tuple[bool,
 
     With no stored hash — an unknown email, or an account with no password — a decoy
     hash is checked instead, and the answer is always False. Returning early would make
-    "no such account" measurably faster than "wrong password", and the timing alone
-    would tell an attacker which emails are registered.
+    "no such account" measurably faster than "wrong password". Registration still says
+    whether an email is taken — it must, so the person knows to sign in instead — but
+    sign-in does not become a second, quieter way to ask.
     """
     hasher = password_hasher
     if stored_hash is None:

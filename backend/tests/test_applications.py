@@ -104,14 +104,19 @@ async def test_a_draft_job_does_not_exist_to_a_candidate(client: AsyncClient) ->
 
 
 async def test_closed_job_does_not_accept_applications(client: AsyncClient) -> None:
+    """Answered as GET /jobs/{id} answers each candidate: an applicant still sees the
+    closed job, so is told it is closed; anyone else is told it does not exist."""
     job = await make_job(client)
-    candidate = await make_candidate(client)
+    applicant, bystander = await make_candidate(client), await make_candidate(client)
+    await apply(client, job, applicant)
     await client.post(f"/jobs/{job['id']}/close")
 
-    response = await apply(client, job, candidate)
+    again = await apply(client, job, applicant)
+    stranger = await apply(client, job, bystander)
 
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "job_not_open"
+    assert again.status_code == 409
+    assert again.json()["error"]["code"] == "job_not_open"
+    assert stranger.status_code == 404
 
 
 async def test_insufficient_experience_is_not_eligible(client: AsyncClient) -> None:

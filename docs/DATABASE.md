@@ -49,7 +49,7 @@ erDiagram
         uuid user_id FK
         string token_hash UK "SHA-256, never the token"
         timestamptz expires_at
-        timestamptz revoked_at "set when used or signed out"
+        timestamptz revoked_at "set when rotated; sign-out deletes the row"
     }
     CANDIDATES {
         uuid id PK, FK "= users.id"

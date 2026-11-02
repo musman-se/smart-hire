@@ -90,11 +90,16 @@ export function refreshSession(): Promise<RefreshOutcome> {
     const refreshToken = session.refreshToken();
     if (!refreshToken) return "refused";
 
-    const response = await fetch(`${BASE_URL}/auth/refresh`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${BASE_URL}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+    } catch {
+      return "unavailable"; // no answer at all — the network, or the API is down
+    }
     if (response.ok) {
       session.store((await response.json()) as TokenPair);
       return "renewed";

@@ -4,12 +4,11 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
 
-import { refreshInFlight, refreshSession } from "../api/client";
+import { ApiError, refreshInFlight, refreshSession } from "../api/client";
 import { authApi } from "../api/resources";
 import type { User } from "../api/types";
 import { session } from "./session";
@@ -22,11 +21,14 @@ import { session } from "./session";
  */
 type AuthState =
   | { status: "loading" }
+  | { status: "unavailable" } // a session to restore, but the API did not answer
   | { status: "signed-out"; keepPlace: boolean }
   | { status: "signed-in"; user: User };
 
 interface AuthContextValue {
   state: AuthState;
+  /** From "unavailable": try restoring the session again. */
+  retry: () => void;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -46,34 +48,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // A reload keeps the refresh token but not the access token: exchange it, then ask
   // who it belongs to. refreshSession is single-flight, so StrictMode's double effect
   // in development still presents the refresh token only once.
+  //
+  // An API that does not answer — a deploy, a network blip — is not a sign-out. The
+  // token is still good, so the user is offered a retry, not the sign-in form.
   useEffect(() => {
     if (state.status !== "loading") return;
     let cancelled = false;
-    refreshSession()
-      .then((outcome) => (outcome === "renewed" ? authApi.me() : null))
-      .then((user) => {
-        if (cancelled) return;
-        setState(user ? { status: "signed-in", user } : { status: "signed-out", keepPlace: true });
-      })
-      .catch(() => {
-        if (!cancelled) setState({ status: "signed-out", keepPlace: true });
-      });
+    const settle = (next: AuthState) => {
+      if (!cancelled) setState(next);
+    };
+    void refreshSession().then(async (outcome) => {
+      if (outcome === "refused") return settle({ status: "signed-out", keepPlace: true });
+      if (outcome === "unavailable") return settle({ status: "unavailable" });
+      try {
+        settle({ status: "signed-in", user: await authApi.me() });
+      } catch (error) {
+        // A 401 here has already signed out, through client.ts; anything else is the
+        // API failing to answer.
+        const refused = error instanceof ApiError && error.status === 401;
+        settle(refused ? { status: "signed-out", keepPlace: true } : { status: "unavailable" });
+      }
+    });
     return () => {
       cancelled = true;
     };
   }, [state.status]);
 
-  // Signed out from anywhere — the button, or a refresh token the server refused.
-  // The cache goes too: the next person to sign in must not see this one's data.
-  // signOut sets keepPlace to false itself; arriving here otherwise means the session
-  // expired under the same person.
-  const deliberate = useRef(false);
+  const retry = useCallback(() => setState({ status: "loading" }), []);
+
+  // Signed out by the server — a refresh token it refused. The same person is coming
+  // back, so sign-in returns them to their page. The cache goes too: whoever signs in
+  // next must not see this one's data.
   useEffect(
     () =>
       session.onSignedOut(() => {
         queryClient.clear();
-        setState({ status: "signed-out", keepPlace: !deliberate.current });
-        deliberate.current = false;
+        setState({ status: "signed-out", keepPlace: true });
       }),
     [queryClient],
   );
@@ -99,16 +109,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // the token it is replacing would achieve nothing. Let it land first.
     await refreshInFlight();
     const refreshToken = session.refreshToken();
-    deliberate.current = true;
     session.clear(); // signed out here at once, whatever the network does next
+    // Set here, after the listener: the button means whoever signs in next may be
+    // someone else, so they start from the beginning, not the last user's page.
+    queryClient.clear();
+    setState({ status: "signed-out", keepPlace: false });
     if (refreshToken) {
-      // Revoked server-side in the background. If that fails, the token still expires.
+      // Ended server-side in the background. If that fails, the token still expires.
       void authApi.logout(refreshToken).catch(() => undefined);
     }
-  }, []);
+  }, [queryClient]);
 
   return (
-    <AuthContext.Provider value={{ state, signIn, signOut }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ state, retry, signIn, signOut }}>
+      {children}
+    </AuthContext.Provider>
   );
 }
 

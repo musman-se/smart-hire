@@ -127,6 +127,16 @@ async def _count_job_applications(session: AsyncSession, job_id: uuid.UUID) -> i
     )
 
 
+async def _existing_application(
+    session: AsyncSession, job_id: uuid.UUID, candidate_id: uuid.UUID
+) -> uuid.UUID | None:
+    return await session.scalar(
+        select(Application.id).where(
+            Application.job_id == job_id, Application.candidate_id == candidate_id
+        )
+    )
+
+
 async def apply_to_job(
     session: AsyncSession, job_id: uuid.UUID, candidate_id: uuid.UUID, payload: ApplicationCreate
 ) -> Application:
@@ -165,11 +175,13 @@ async def _apply(
     job = await get_job(session, job_id, lock=True)
     candidate = await get_candidate(session, candidate_id, lock=True)
 
-    # A closed job that was once published is no longer accepting: 409. One that was
-    # never published — a draft, mid-publish, failed — does not exist to a candidate:
-    # 404, as GET /jobs/{id} answers. A 409 would confirm the hidden job is real.
+    # Answered as GET /jobs/{id} answers the candidate. A closed job they applied to
+    # is visible to them, and no longer accepting: 409. Any other unpublished job does
+    # not exist to them: 404 — a 409 would confirm a hidden job is real.
     if job.status is not JobStatus.PUBLISHED:
-        if job.status is JobStatus.CLOSED and job.published_at is not None:
+        if job.status is JobStatus.CLOSED and await _existing_application(
+            session, job.id, candidate.id
+        ):
             raise JobNotOpenError("This job is no longer accepting applications.")
         raise JobNotFoundError(job.id)
 
@@ -192,13 +204,7 @@ async def _apply(
 
     # Rule 1, friendly path: a pre-check so the common case returns a clear 409 without
     # burning a failed transaction. It is not what makes the rule correct.
-    existing = await session.scalar(
-        select(Application.id).where(
-            Application.job_id == job.id,
-            Application.candidate_id == candidate.id,
-        )
-    )
-    if existing is not None:
+    if await _existing_application(session, job.id, candidate.id) is not None:
         raise DuplicateApplicationError("This candidate has already applied to this job.")
 
     # The id is set here rather than left to the INSERT, so the first history entry

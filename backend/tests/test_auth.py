@@ -182,12 +182,25 @@ async def test_refreshing_rotates_the_refresh_token(anonymous: AsyncClient) -> N
     assert me.status_code == 200
 
 
-async def test_reusing_a_refresh_token_revokes_every_session(anonymous: AsyncClient) -> None:
+async def _age_rotations(session: AsyncSession, seconds: int = 60) -> None:
+    """Move every rotation into the past, beyond the reuse grace period."""
+    await session.execute(
+        update(RefreshToken)
+        .where(RefreshToken.revoked_at.is_not(None))
+        .values(revoked_at=datetime.now(UTC) - timedelta(seconds=seconds))
+    )
+    await session.commit()
+
+
+async def test_reusing_a_refresh_token_revokes_every_session(
+    anonymous: AsyncClient, session: AsyncSession
+) -> None:
     """The old token being presented again means it was copied. Both the thief's next
     refresh and the owner's are refused; the owner signs in again."""
     await make_candidate(anonymous, email="stolen@example.com")
     stolen = (await sign_in(anonymous, "stolen@example.com")).json()["refresh_token"]
     rotated = (await anonymous.post("/auth/refresh", json={"refresh_token": stolen})).json()
+    await _age_rotations(session)
 
     replay = await anonymous.post("/auth/refresh", json={"refresh_token": stolen})
     owner = await anonymous.post("/auth/refresh", json={"refresh_token": rotated["refresh_token"]})
@@ -195,6 +208,63 @@ async def test_reusing_a_refresh_token_revokes_every_session(anonymous: AsyncCli
     assert replay.status_code == owner.status_code == 401
     assert owner.json()["error"]["code"] == "invalid_refresh_token"
     assert (await sign_in(anonymous, "stolen@example.com")).status_code == 200
+
+
+async def test_a_token_presented_again_moments_after_rotating_is_not_theft(
+    anonymous: AsyncClient,
+) -> None:
+    """A page reloaded while its refresh was in flight presents the token it just
+    rotated. That is refused, but the user's other sessions carry on."""
+    await make_candidate(anonymous, email="reload@example.com")
+    raced = (await sign_in(anonymous, "reload@example.com")).json()["refresh_token"]
+    await anonymous.post("/auth/refresh", json={"refresh_token": raced})
+    elsewhere = (await sign_in(anonymous, "reload@example.com")).json()["refresh_token"]
+
+    again = await anonymous.post("/auth/refresh", json={"refresh_token": raced})
+
+    assert again.status_code == 401
+    still = await anonymous.post("/auth/refresh", json={"refresh_token": elsewhere})
+    assert still.status_code == 200
+
+
+async def test_old_devices_cannot_end_the_sessions_signed_in_after_a_theft(
+    anonymous: AsyncClient, session: AsyncSession
+) -> None:
+    """Ending every session deletes the live tokens rather than marking them. Marked,
+    each old device presenting its token later looked like a second theft and ended
+    the user's new sessions all over again."""
+    await make_candidate(anonymous, email="cascade@example.com")
+    stolen = (await sign_in(anonymous, "cascade@example.com")).json()["refresh_token"]
+    phone = (await sign_in(anonymous, "cascade@example.com")).json()["refresh_token"]
+    await anonymous.post("/auth/refresh", json={"refresh_token": stolen})
+    await _age_rotations(session)
+    await anonymous.post("/auth/refresh", json={"refresh_token": stolen})  # every session ends
+    await _age_rotations(session)  # the phone wakes up long after
+
+    laptop = (await sign_in(anonymous, "cascade@example.com")).json()["refresh_token"]
+    old_phone = await anonymous.post("/auth/refresh", json={"refresh_token": phone})
+
+    assert old_phone.status_code == 401
+    assert (
+        await anonymous.post("/auth/refresh", json={"refresh_token": laptop})
+    ).status_code == 200
+
+
+async def test_signing_out_with_a_token_someone_else_rotated_ends_every_session(
+    anonymous: AsyncClient, session: AsyncSession
+) -> None:
+    """The owner signs out with the token a thief has already exchanged: the thief's
+    session must not survive the owner's sign-out."""
+    await make_candidate(anonymous, email="signout@example.com")
+    owners = (await sign_in(anonymous, "signout@example.com")).json()["refresh_token"]
+    thiefs = (await anonymous.post("/auth/refresh", json={"refresh_token": owners})).json()
+    await _age_rotations(session)
+
+    signed_out = await anonymous.post("/auth/logout", json={"refresh_token": owners})
+
+    assert signed_out.status_code == 204
+    thief = await anonymous.post("/auth/refresh", json={"refresh_token": thiefs["refresh_token"]})
+    assert thief.status_code == 401
 
 
 async def test_an_expired_refresh_token_is_refused(

@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     # refresh token, which can be revoked, carries the session between them.
     access_token_minutes: int = Field(default=15, ge=1, le=60)
     refresh_token_days: int = Field(default=14, ge=1, le=90)
+    # A refresh token presented again this soon after it was rotated is refused, but not
+    # taken for theft: it is almost always its own client — a retry after a lost
+    # response, or a page reloaded mid-refresh. Later than this, every session ends.
+    refresh_reuse_grace_seconds: int = Field(default=10, ge=0, le=60)
     # Threads that hash passwords (Argon2id: ~0.1 s of CPU and 64 MiB each). Sign-ins
     # beyond this many at once queue rather than take more CPU and memory.
     password_hash_workers: int = Field(default=4, ge=1, le=32)

@@ -84,8 +84,8 @@ async def test_a_business_refusal_is_replayed_too(client: AsyncClient) -> None:
     first = await client.post(f"/jobs/{job['id']}/applications", json={}, headers=headers)
     retry = await client.post(f"/jobs/{job['id']}/applications", json={}, headers=headers)
 
-    assert first.status_code == retry.status_code == 409
-    assert retry.json()["error"]["code"] == "job_not_open"
+    assert first.status_code == retry.status_code == 404
+    assert retry.json()["error"]["code"] == "not_found"
     assert retry.headers["Idempotent-Replayed"] == "true"
 
 

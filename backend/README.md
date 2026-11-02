@@ -94,7 +94,7 @@ health probes:
 | POST | `/auth/register` | A candidate creates their account and profile. Does not sign in |
 | POST | `/auth/login` | Email + password → access token (15 min) + refresh token |
 | POST | `/auth/refresh` | Refresh token → a new pair. Each refresh token works once |
-| POST | `/auth/logout` | Revoke a refresh token |
+| POST | `/auth/logout` | End the session: its refresh token is deleted |
 | GET | `/auth/me` | The signed-in user (requires a token) |
 
 Recruiters are not created over HTTP:

@@ -436,17 +436,24 @@ which of them is which, so it ends both sessions; the owner signs in again. The 
 token is opaque because nothing needs to read it except this table — a JWT would only
 add a second way to accept it.
 
-Only a *rotated* token counts as reuse. Signing out deletes the token's row, so a
-signed-out tab presenting its old token is turned away without ending the user's other
-sessions; an expired token is refused before the reuse check, for the same reason.
+Only a *rotated* token counts as reuse, so `revoked_at` means exactly that. Signing out
+deletes the token's row, and so does ending every session — marked instead, each old
+device presenting its token later would look like a second theft and end the user's
+*new* sessions. An expired token is refused before the reuse check. Signing out with a
+token someone else has already rotated is itself reuse, and ends every session — the
+thief's included.
 
-**Tradeoffs.** There is no grace period: a client whose refresh succeeded but whose
-response was lost, and which retries with the old token, ends all its sessions and signs
-in again. A grace period would also give a thief that window. Signing out ends the
-refresh token, but the access token in hand still works until it expires — at most 15
-minutes. Revoking access tokens too would mean a
-database lookup of every token on every request, which is the server-side session this
-design avoided. Each request does load the *user* (one primary-key read), so a deleted
+A token presented again within `REFRESH_REUSE_GRACE_SECONDS` (10) of its rotation is
+refused but not taken for theft: that is nearly always its own client — a retry after a
+lost response, or a page reloaded while its refresh was in flight. The same reuse
+interval appears in common identity providers.
+
+**Tradeoffs.** Inside the grace window a thief who rotated first goes undetected if the
+owner presents the old token within those seconds; afterwards, detection works as
+above. Signing out ends the refresh token, but the access token in hand still works
+until it expires — at most 15 minutes. Revoking access tokens too would mean a database
+lookup of every token on every request, which is the server-side session this design
+avoided. Each request does load the *user* (one primary-key read), so a deleted
 account stops working immediately — §4.25.
 
 The algorithm is fixed in code, not read from the token or from settings: a verifier
@@ -468,15 +475,17 @@ bcrypt is still acceptable, but it is not memory-hard and caps passwords at 72 b
 passlib, its usual wrapper, is no longer maintained. That same 0.1 s on the event loop
 would stall every other request, which is why it runs in a thread (argon2-cffi releases
 the GIL, so the threads hash in parallel). An unknown email still pays for one hash, of
-a decoy, so the response time does not reveal which emails are registered. Hashes made
-with weaker parameters are upgraded the next time the password is proved.
+a decoy, so sign-in's timing does not say which emails are registered. Registration
+does say it — it must, so a returning user knows to sign in instead — which is why the
+decoy is about not adding a second, quieter way to ask, not about hiding the answer.
+Hashes made with weaker parameters are upgraded the next time the password is proved.
 
 The pool is separate and bounded because sign-in is the cheapest request to send and
 the most expensive to answer. On the event loop's default pool, a burst of sign-ins
 would also delay the hostname lookups every new database connection needs; unbounded,
 it would take 64 MiB per hash in flight. And a sign-in that held its pooled database
-connection through the hash could, sixteen at a time, leave no connection for anyone
-else — so the read is committed first.
+connection through the hash could, fifteen at a time (the default pool and its
+overflow), leave no connection for anyone else — so the read is committed first.
 
 ### 4.24 A candidate's profile shares its account's primary key
 
@@ -557,7 +566,8 @@ recruiters may call. Whoever can run a command on the server is already trusted.
 | No password reset or email verification; pre-auth candidates cannot sign in | Needs an email channel — the notifications table is the seam |
 | An access token outlives sign-out by up to 15 minutes | By design (§4.22); a deny-list in Redis if it ever matters |
 | Used and expired refresh tokens accumulate | A periodic purge of rows past `expires_at` |
-| The console keeps the refresh token in sessionStorage, readable by injected script | An httpOnly cookie — [frontend/README.md](../frontend/README.md#authentication) |
+| The console holds the refresh token where script on the page could read it | An httpOnly cookie — [frontend/README.md](../frontend/README.md#authentication) |
+| No limit on accounts probing registration for taken emails | Rate limiting (below); registration must answer "taken" to be usable |
 | ~~Publishing is synchronous, no skill extraction~~ | Module 2 — `PublishJobWorkflow` |
 | ~~`match_score` is always null~~ | Module 2 — `ProcessApplicationWorkflow`, rule-based score |
 | ~~Withdrawing deletes the application~~ | Module 2 — `withdrawn` stage + history |
