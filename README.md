@@ -40,6 +40,7 @@ create their own account at `/register`.
 | Interactive API docs | http://localhost:8000/docs |
 | Temporal UI — every workflow run | http://localhost:8233 |
 | PostgreSQL / Redis | localhost:5432 / localhost:6379 |
+| pgAdmin (optional: `docker compose up -d pgadmin`) | http://localhost:5050 |
 
 Every port and setting is configurable — see [.env.example](.env.example).
 
@@ -71,6 +72,7 @@ flowchart LR
 | `redis` | Idempotency records, with expiry |
 | `web` | The recruiter console, proxying `/api` |
 | `seed` | On demand: `docker compose run --rm seed` — creates the recruiter, then seeds through the API |
+| `pgadmin` | On demand: `docker compose up -d pgadmin`; database password from `.env` |
 
 Temporal or Redis being down degrades the platform rather than stopping it: reads and
 applications keep working; publishing waits. See [docs/WORKFLOWS.md](docs/WORKFLOWS.md#5-failure-modes).
@@ -92,7 +94,7 @@ scripts/     seed.py (demo data via the API), index-benchmark/
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Services, domain packages, 26 design decisions with tradeoffs |
 | [docs/WORKFLOWS.md](docs/WORKFLOWS.md) | The two Temporal workflows, every failure mode, how to watch and demo them |
 | [docs/DATABASE.md](docs/DATABASE.md) | Normalisation, constraints, indexes with measurements, concurrency |
-| [docs/MIGRATIONS.md](docs/MIGRATIONS.md) | How Alembic works here, and the mistakes it caught |
+| [docs/MIGRATIONS.md](docs/MIGRATIONS.md) | How Alembic works here, the mistakes it caught, and seeing it all in pgAdmin |
 | [backend/README.md](backend/README.md) | API reference, error codes, business rules, tests |
 | [frontend/README.md](frontend/README.md) | Vite-over-Next.js rationale, generated API types |
 
