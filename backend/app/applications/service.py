@@ -161,8 +161,10 @@ async def _apply(
     candidate = await get_candidate(session, candidate_id, lock=True)
 
     # A draft job is not visible to candidates; a closed one is no longer accepting.
+    # The message does not name the status: to a candidate, a draft does not exist yet,
+    # and GET /jobs/{id} says so with a 404.
     if job.status is not JobStatus.PUBLISHED:
-        raise JobNotOpenError(f"Job {job.id} is {job.status} and is not accepting applications.")
+        raise JobNotOpenError("This job is not accepting applications.")
 
     _check_eligibility(job, candidate)
 
