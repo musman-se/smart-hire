@@ -209,13 +209,12 @@ async def test_a_row_stored_before_the_input_caps_still_reads_and_publishes(
     client: AsyncClient, session: AsyncSession
 ) -> None:
     """The caps once sat on the schema JobRead shares, so a row saved before they
-    existed — a long description, a large cap — failed validation on every read: a 500
-    on the job page and on the list that included it."""
+    existed — a large cap — failed validation on every read: a 500 on the job page and
+    on the list that included it. (A long description was the other case; the
+    ck_jobs_description_length constraint now keeps one from being stored at all.)"""
     job = await make_job(client, publish=False)
     await session.execute(
-        update(Job)
-        .where(Job.id == uuid.UUID(job["id"]))
-        .values(description="Build things with Python. " * 1_000, max_applications=10**9)
+        update(Job).where(Job.id == uuid.UUID(job["id"])).values(max_applications=10**9)
     )
     await session.commit()
 

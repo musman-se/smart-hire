@@ -34,8 +34,7 @@ from temporalio.exceptions import ApplicationError
 
 from app.core.config import settings
 from app.jobs.enums import JobStatus
-from app.jobs.models import Job
-from app.jobs.schemas import DESCRIPTION_MAX_LENGTH
+from app.jobs.models import DESCRIPTION_MAX_LENGTH, Job
 from app.publishing.content import (
     KNOWN_SKILLS,
     DescriptionBreakdown,

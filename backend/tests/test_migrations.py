@@ -27,6 +27,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
+from app.jobs.models import (
+    DESCRIPTION_MAX_LENGTH,
+    DESCRIPTION_MIN_LENGTH,
+    TITLE_MAX_LENGTH,
+    TITLE_MIN_LENGTH,
+)
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 DB_NAME = f"{settings.test_database_name}_migrations"
@@ -238,3 +244,47 @@ def test_existing_candidates_get_an_account_that_cannot_sign_in(alembic_config: 
     command.downgrade(alembic_config, "b7e3d05a9c12")
 
     assert _query("SELECT email FROM candidates") == [("before.auth@example.com",)]
+
+
+def _insert_job(job_id: int, title: str, description: str) -> None:
+    _query(
+        f"""
+        INSERT INTO jobs (id, title, description, employment_type, status)
+        VALUES ('00000000-0000-0000-0000-{job_id:012d}', '{title}', '{description}',
+                'FULL_TIME', 'DRAFT')
+        """
+    )
+
+
+def test_migrated_text_bounds_match_the_models(alembic_config: Config) -> None:
+    """`alembic check` does not compare CHECK constraints, so a changed constant with no
+    migration would pass it — and the API and the database would quietly disagree. This
+    probes the migrated schema at each edge of the bounds the models declare."""
+    command.upgrade(alembic_config, "head")
+
+    _insert_job(9, "x" * TITLE_MIN_LENGTH, "x" * DESCRIPTION_MIN_LENGTH)
+    _insert_job(10, "x" * TITLE_MAX_LENGTH, "x" * DESCRIPTION_MAX_LENGTH)
+
+    for title, description in [
+        ("x" * (TITLE_MIN_LENGTH - 1), "x" * DESCRIPTION_MIN_LENGTH),
+        ("x" * TITLE_MIN_LENGTH, "x" * (DESCRIPTION_MIN_LENGTH - 1)),
+        ("x" * TITLE_MIN_LENGTH, "x" * (DESCRIPTION_MAX_LENGTH + 1)),
+    ]:
+        with pytest.raises(Exception, match="ck_jobs_(title|description)_length"):
+            _insert_job(11, title, description)
+
+    assert _query("SELECT count(*) FROM jobs") == [(2,)]
+
+
+def test_a_job_outside_the_text_bounds_stops_the_upgrade(alembic_config: Config) -> None:
+    """81276ef5beaf names the jobs to fix rather than altering a recruiter's text."""
+    command.upgrade(alembic_config, "d5e8a2f41c07")
+    _insert_job(12, "QA", "A job whose title predates the minimum.")
+
+    with pytest.raises(RuntimeError, match="00000000-0000-0000-0000-000000000012"):
+        command.upgrade(alembic_config, "81276ef5beaf")
+
+    _query("UPDATE jobs SET title = 'QA Engineer'")
+    command.upgrade(alembic_config, "81276ef5beaf")
+    command.downgrade(alembic_config, "d5e8a2f41c07")
+    _insert_job(13, "QA", "Allowed again once the checks are gone.")
