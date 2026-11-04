@@ -1,19 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { Navigate, RouterProvider, createBrowserRouter } from "react-router-dom";
+import { RouterProvider } from "react-router-dom";
 
 import { ApiError } from "./api/client";
 import { AuthProvider } from "./auth/AuthProvider";
-import { RequireAuth } from "./auth/RequireAuth";
-import { Layout } from "./components/Layout";
-import { CandidateDetailPage } from "./pages/CandidateDetailPage";
-import { CandidatesPage } from "./pages/CandidatesPage";
-import { JobDetailPage } from "./pages/JobDetailPage";
-import { JobsPage } from "./pages/JobsPage";
-import { LoginPage } from "./pages/LoginPage";
-import { RegisterPage } from "./pages/RegisterPage";
-import "./styles.css";
+import { ConfirmProvider, ToastProvider } from "./components/ui";
+import { ThemeProvider } from "./hooks/useTheme";
+import { router } from "./router";
+import "./styles/index.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -29,32 +24,22 @@ const queryClient = new QueryClient({
   },
 });
 
-const router = createBrowserRouter([
-  { path: "/login", element: <LoginPage /> },
-  { path: "/register", element: <RegisterPage /> },
-  {
-    path: "/",
-    element: (
-      <RequireAuth>
-        <Layout />
-      </RequireAuth>
-    ),
-    children: [
-      { index: true, element: <Navigate to="/jobs" replace /> },
-      { path: "jobs", element: <JobsPage /> },
-      { path: "jobs/:jobId", element: <JobDetailPage /> },
-      { path: "candidates", element: <CandidatesPage /> },
-      { path: "candidates/:candidateId", element: <CandidateDetailPage /> },
-      { path: "*", element: <Navigate to="/jobs" replace /> },
-    ],
-  },
-]);
-
+/*
+ * Provider order: data first (Auth clears the query cache on sign-out, so it sits
+ * inside QueryClient), then presentation (theme, toasts, confirms), which pages reach
+ * from anywhere — including from inside dialogs, which portal out to <body>.
+ */
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <RouterProvider router={router} />
+        <ThemeProvider>
+          <ToastProvider>
+            <ConfirmProvider>
+              <RouterProvider router={router} />
+            </ConfirmProvider>
+          </ToastProvider>
+        </ThemeProvider>
       </AuthProvider>
     </QueryClientProvider>
   </StrictMode>,

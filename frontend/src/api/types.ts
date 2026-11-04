@@ -70,6 +70,27 @@ export const TERMINAL_STAGES: ReadonlySet<ApplicationStage> = new Set([
   "withdrawn",
 ]);
 
+/** The forward path of an application, in order. Rejected and withdrawn leave it. */
+export const PIPELINE_STAGES = [
+  "applied",
+  "screening",
+  "interview",
+  "offer",
+  "hired",
+] as const satisfies readonly ApplicationStage[];
+
+/**
+ * Mirrors the backend's MAX_APPLICATIONS_PER_CANDIDATE default (app/core/config.py):
+ * how many non-terminal applications a candidate may hold at once. The server reads
+ * it from the environment, so a deployment can differ — the UI uses this only to show
+ * progress toward the cap; the application_limit_reached error remains the authority.
+ */
+export const MAX_ACTIVE_APPLICATIONS = 10;
+
+/** Text limits from the backend's application schemas, so the forms stop where it would. */
+export const COVER_LETTER_MAX_LENGTH = 5000;
+export const STAGE_NOTE_MAX_LENGTH = 1000;
+
 export const EMPLOYMENT_TYPES = [
   "full_time",
   "part_time",

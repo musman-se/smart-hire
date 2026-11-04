@@ -1,0 +1,845 @@
+/*
+ * Candidate experience.
+ * Pages: pages/candidate/HomePage.tsx, pages/candidate/MyApplicationsPage.tsx, pages/ProfilePage.tsx
+ *
+ * Owned by that feature team. Use tokens from ../tokens.css for every colour, size and
+ * duration, and prefix classes with the area (e.g. .candidate-…) so files never collide.
+ * Profile classes use .profile-…
+ */
+
+/* ======================================================================== shared */
+
+/* Tone → colours for the stage status lines (tone names come from STAGE_COPY). */
+:where(.candidate-app-status, .candidate-drawer-status)[data-tone="neutral"] {
+  --candidate-tone-bg: var(--color-neutral-soft);
+  --candidate-tone-fg: var(--color-neutral-text);
+}
+:where(.candidate-app-status, .candidate-drawer-status)[data-tone="accent"] {
+  --candidate-tone-bg: var(--color-accent-soft);
+  --candidate-tone-fg: var(--color-accent-text);
+}
+:where(.candidate-app-status, .candidate-drawer-status)[data-tone="success"] {
+  --candidate-tone-bg: var(--color-success-soft);
+  --candidate-tone-fg: var(--color-success-text);
+}
+:where(.candidate-app-status, .candidate-drawer-status)[data-tone="warning"] {
+  --candidate-tone-bg: var(--color-warning-soft);
+  --candidate-tone-fg: var(--color-warning-text);
+}
+:where(.candidate-app-status, .candidate-drawer-status)[data-tone="danger"] {
+  --candidate-tone-bg: var(--color-danger-soft);
+  --candidate-tone-fg: var(--color-danger-text);
+}
+:where(.candidate-app-status, .candidate-drawer-status)[data-tone="info"] {
+  --candidate-tone-bg: var(--color-info-soft);
+  --candidate-tone-fg: var(--color-info-text);
+}
+
+.candidate-card-body {
+  padding: var(--space-4) var(--space-5) var(--space-5);
+}
+
+.candidate-job-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.candidate-unlisted {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* ======================================================================== home */
+
+.candidate-kpis {
+  margin-bottom: var(--space-5);
+}
+.candidate-kpi-of {
+  font-size: var(--text-md);
+  font-weight: var(--weight-regular);
+  color: var(--color-text-subtle);
+}
+
+.candidate-home-grid {
+  margin-top: var(--space-1);
+}
+
+/* ---------- first run ---------- */
+
+.candidate-onboarding {
+  margin-bottom: var(--space-5);
+  background: linear-gradient(135deg, var(--color-accent-soft), var(--color-surface) 65%);
+  border-color: var(--color-accent-border);
+  animation: fade-in var(--duration-slow) var(--ease-out);
+}
+.candidate-onboarding-intro {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+.candidate-onboarding-badge {
+  display: grid;
+  place-items: center;
+  width: var(--control-lg);
+  height: var(--control-lg);
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  box-shadow: var(--shadow-sm);
+}
+.candidate-onboarding-title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
+}
+.candidate-onboarding-lead {
+  color: var(--color-text-muted);
+}
+
+.candidate-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.candidate-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: 1fr auto;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+.candidate-step-marker {
+  display: grid;
+  place-items: center;
+  width: var(--space-6);
+  height: var(--space-6);
+  border-radius: var(--radius-full);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+.candidate-step.is-done .candidate-step-marker {
+  background: var(--color-success-soft);
+  color: var(--color-success-text);
+}
+.candidate-step-title {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+.candidate-step.is-done .candidate-step-title {
+  color: var(--color-text-muted);
+}
+.candidate-step-description {
+  margin-top: var(--space-0-5);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.candidate-step-action {
+  grid-column: 2;
+}
+
+/* ---------- recommendations ---------- */
+
+.candidate-rec-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.candidate-rec {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3) var(--space-4);
+  padding: var(--space-4) 0;
+}
+.candidate-rec + .candidate-rec {
+  border-top: 1px solid var(--color-border-subtle);
+}
+.candidate-rec:first-child {
+  padding-top: 0;
+}
+.candidate-rec:last-child {
+  padding-bottom: 0;
+}
+
+.candidate-rec-fit {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+.candidate-rec-fit[data-fit="high"] {
+  background: var(--color-success-soft);
+  color: var(--color-success-text);
+}
+.candidate-rec-fit[data-fit="mid"] {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+}
+.candidate-rec-fit[data-fit="open"] {
+  background: var(--color-violet-soft);
+  color: var(--color-violet-text);
+}
+
+.candidate-rec-body {
+  display: grid;
+  gap: var(--space-1-5);
+  min-width: 0;
+}
+.candidate-rec-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+}
+.candidate-rec-title {
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+.candidate-rec-title:hover {
+  color: var(--color-accent-text);
+  text-decoration: underline;
+}
+.candidate-rec-posted {
+  color: var(--color-text-subtle);
+  font-size: var(--text-xs);
+}
+.candidate-rec-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+.candidate-rec-reasons li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.candidate-rec-reasons .icon {
+  color: var(--color-success);
+}
+
+/* ---------- recent updates ---------- */
+
+.candidate-feed-link {
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+}
+.candidate-feed-link:hover {
+  color: var(--color-accent-text);
+}
+.candidate-feed-extra {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+/* ---------- profile strength (also on the profile page) ---------- */
+
+.candidate-checklist-percent {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  color: var(--color-accent-text);
+}
+.candidate-checklist-items {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.candidate-checklist-items li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2-5);
+  font-size: var(--text-sm);
+}
+.candidate-checklist-mark {
+  display: grid;
+  place-items: center;
+  width: var(--space-5);
+  height: var(--space-5);
+  flex-shrink: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  color: var(--color-text-subtle);
+}
+.candidate-checklist-items li[data-done] .candidate-checklist-mark {
+  border-color: transparent;
+  background: var(--color-success-soft);
+  color: var(--color-success-text);
+  animation: pop-in var(--duration-base) var(--ease-spring);
+}
+.candidate-checklist-label {
+  color: var(--color-text-muted);
+}
+.candidate-checklist-open {
+  min-width: 0;
+}
+.candidate-checklist-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+}
+.candidate-checklist-link .icon {
+  color: var(--color-text-subtle);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.candidate-checklist-link:hover {
+  color: var(--color-accent-text);
+}
+.candidate-checklist-link:hover .icon {
+  transform: translateX(var(--space-0-5));
+  color: currentColor;
+}
+.candidate-checklist-hint {
+  color: var(--color-text-subtle);
+  font-size: var(--text-xs);
+}
+
+/* ======================================================================== applications */
+
+.candidate-apps-summary {
+  margin-bottom: var(--space-5);
+}
+
+.candidate-cap {
+  display: grid;
+  gap: var(--space-2);
+}
+.candidate-cap-label {
+  font-weight: var(--weight-medium);
+}
+.candidate-cap-value {
+  color: var(--color-text-subtle);
+  font-size: var(--text-sm);
+}
+.candidate-cap-hint {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+.candidate-cap[data-level="full"] .candidate-cap-hint {
+  color: var(--color-danger-text);
+}
+
+.candidate-apps-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+/* The tabs keep their full width (basis auto, no shrinking), so on a narrow screen
+ * the order control wraps onto its own line instead of clipping "Closed". */
+.candidate-apps-toolbar .tabs {
+  flex: 1 0 auto;
+  max-width: 100%;
+}
+
+.candidate-app-list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-5);
+  padding: 0;
+  list-style: none;
+}
+
+/* The whole card opens the drawer: the title button stretches over it, and the
+ * badges and menu sit above that layer so they stay clickable. */
+.candidate-app {
+  position: relative;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-xs);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-base) var(--ease-out);
+  animation: fade-in var(--duration-base) var(--ease-out);
+}
+.candidate-app:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-sm);
+}
+.candidate-app:not([data-active]) {
+  background: var(--color-surface-sunken);
+}
+
+.candidate-app-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+}
+.candidate-app-heading {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.candidate-app-title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+}
+.candidate-app-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.candidate-app-open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.candidate-app-open:hover {
+  color: var(--color-accent-text);
+}
+.candidate-app-open:focus-visible {
+  outline: none;
+}
+.candidate-app:has(.candidate-app-open:focus-visible) {
+  box-shadow: var(--focus-ring);
+}
+
+.candidate-app-badges {
+  position: relative;
+  z-index: var(--z-raised);
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* An open menu (focus is inside it) must clear the next card's badges. */
+.candidate-app-badges:focus-within {
+  z-index: var(--z-dropdown);
+}
+
+.candidate-app-stepper {
+  margin: var(--space-1) 0;
+}
+
+.candidate-app-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+}
+.candidate-app-status {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--color-text-muted);
+}
+.candidate-app-status > .icon {
+  flex-shrink: 0;
+  margin-top: var(--space-0-5);
+  color: var(--candidate-tone-fg);
+}
+.candidate-app-status strong {
+  color: var(--color-text);
+  font-weight: var(--weight-medium);
+}
+.candidate-app-dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  color: var(--color-text-subtle);
+  font-size: var(--text-xs);
+}
+
+/* ---------- the drawer ---------- */
+
+.candidate-drawer {
+  display: grid;
+  gap: var(--space-6);
+}
+.candidate-drawer-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--candidate-tone-bg);
+}
+.candidate-drawer-status-icon {
+  display: grid;
+  place-items: center;
+  width: var(--control-md);
+  height: var(--control-md);
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  color: var(--candidate-tone-fg);
+}
+.candidate-drawer-status-title {
+  font-weight: var(--weight-semibold);
+  color: var(--candidate-tone-fg);
+}
+.candidate-drawer-status-next {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.candidate-drawer-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.candidate-drawer-section {
+  display: grid;
+  gap: var(--space-3);
+}
+.candidate-drawer-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-subtle);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+.candidate-drawer-count {
+  padding: 0 var(--space-1-5);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-sunken);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.candidate-drawer-fineprint {
+  display: flex;
+  gap: var(--space-1-5);
+  color: var(--color-text-subtle);
+  font-size: var(--text-xs);
+}
+
+.candidate-messages {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.candidate-message {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+.candidate-message summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2-5) var(--space-3);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  list-style: none;
+}
+.candidate-message summary::-webkit-details-marker {
+  display: none;
+}
+.candidate-message summary:hover {
+  background: var(--color-surface-hover);
+}
+.candidate-message summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.candidate-message summary > .icon:first-child {
+  flex-shrink: 0;
+  color: var(--color-info);
+}
+.candidate-message-subject {
+  flex: 1;
+  min-width: 0;
+  font-weight: var(--weight-medium);
+}
+.candidate-message-date {
+  flex-shrink: 0;
+  color: var(--color-text-subtle);
+  font-size: var(--text-xs);
+}
+.candidate-message-chevron {
+  flex-shrink: 0;
+  color: var(--color-text-subtle);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.candidate-message[open] .candidate-message-chevron {
+  transform: rotate(180deg);
+}
+.candidate-message-body {
+  padding: var(--space-1) var(--space-3) 0 calc(var(--space-3) + var(--space-6));
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+.candidate-message-meta {
+  padding: var(--space-2) var(--space-3) var(--space-3) calc(var(--space-3) + var(--space-6));
+  color: var(--color-text-subtle);
+  font-size: var(--text-xs);
+}
+
+.candidate-letter {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-left: var(--space-0-5) solid var(--color-accent-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+/* ======================================================================== profile */
+
+.profile-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 22rem;
+  gap: var(--space-5);
+  align-items: start;
+}
+.profile-rail {
+  position: sticky;
+  top: calc(var(--topbar-height) + var(--space-4));
+}
+
+.profile-counter[data-over] {
+  color: var(--color-warning-text);
+}
+.profile-link-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-accent-text);
+  font-size: var(--text-xs);
+}
+
+/* Sticks to the bottom of the viewport while there is something to save. It stays in
+ * the editor's column: the sticky rail beside it can slide down past the editor's row,
+ * and a full-width bar would cover the rail's last lines there. */
+.profile-savebar {
+  grid-column: 1;
+  position: sticky;
+  bottom: var(--space-4);
+  z-index: var(--z-sticky);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-lg);
+  animation: pop-in var(--duration-base) var(--ease-spring);
+}
+.profile-savebar-text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: var(--weight-medium);
+}
+.profile-savebar-text .icon {
+  color: var(--color-warning);
+}
+.profile-savebar-shortcut {
+  color: var(--color-text-subtle);
+}
+.profile-savebar .button-row {
+  margin-left: auto;
+}
+
+/* ---------- live preview ---------- */
+
+.profile-preview-card {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+}
+.profile-preview-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.profile-preview-name {
+  display: grid;
+  min-width: 0;
+}
+.profile-preview-name strong {
+  overflow-wrap: anywhere;
+}
+.profile-preview-headline {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.profile-preview-missing {
+  color: var(--color-text-subtle);
+  font-size: var(--text-sm);
+  font-style: italic;
+}
+.profile-preview-facts {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+.profile-preview-facts li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.profile-preview-facts .icon {
+  flex-shrink: 0;
+  color: var(--color-text-subtle);
+}
+.profile-preview-label {
+  color: var(--color-text-subtle);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+
+/* ---------- account and preferences ---------- */
+
+.profile-settings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: var(--space-5);
+  align-items: start;
+  margin-top: var(--space-5);
+}
+.profile-account-email {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.profile-setting {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1-5);
+}
+.profile-setting-label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+.profile-setting-hint {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+.profile-tips {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.profile-tips li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* ======================================================================== responsive */
+
+@media (max-width: 1100px) {
+  .profile-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .profile-rail {
+    position: static;
+  }
+}
+
+@media (max-width: 900px) {
+  .candidate-steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .candidate-card-body {
+    padding: var(--space-4);
+  }
+  .candidate-rec {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .candidate-rec-cta {
+    grid-column: 2;
+    justify-self: start;
+  }
+  .candidate-app {
+    padding: var(--space-4);
+  }
+  .candidate-app-head {
+    flex-direction: column;
+  }
+  .candidate-app-badges {
+    align-self: stretch;
+  }
+  .candidate-app-badges > :last-child {
+    margin-left: auto;
+  }
+  .candidate-apps-toolbar {
+    align-items: stretch;
+  }
+  .profile-savebar {
+    padding: var(--space-3);
+  }
+  .profile-savebar-shortcut {
+    display: none;
+  }
+  .profile-savebar .button-row {
+    width: 100%;
+  }
+  .profile-savebar .button-row > * {
+    flex: 1;
+  }
+}

@@ -1,0 +1,538 @@
+/*
+ * Recruiter people tools: the candidate directory and profile (.candidates-…), the
+ * review queue (.queue-…, pages/recruiter/ApplicationsPage.tsx) and the application
+ * pieces both share (.apps-…, components/applications/).
+ */
+
+/* ======================================================================== directory */
+
+.candidates-panel {
+  overflow: visible; /* the skill suggestions drop below the toolbar */
+}
+
+.candidates-toolbar,
+.queue-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+.candidates-search {
+  flex: 1 1 14rem;
+  max-width: 20rem;
+}
+.candidates-skill {
+  flex: 1 1 11rem;
+  max-width: 14rem;
+}
+.candidates-exp {
+  flex: 0 1 10rem;
+}
+
+.candidates-bulkbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-height: var(--control-lg);
+  padding: var(--space-1-5) var(--space-4);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-sunken);
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+.candidates-bulkbar[data-active="true"] {
+  background: var(--color-accent-soft);
+}
+.candidates-bulk-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.candidates-bulk-status strong {
+  color: var(--color-accent-text);
+  font-weight: var(--weight-semibold);
+}
+
+.candidates-error,
+.queue-error,
+.queue-stalled {
+  padding: 0 var(--space-4);
+}
+
+.candidates-footer,
+.queue-footer {
+  padding: 0 var(--space-4) var(--space-3);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+/* Name + headline in one cell, the way people scan a list of people. */
+.candidates-person,
+.queue-person {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  min-width: 0;
+}
+.candidates-person-text,
+.queue-person-text,
+.queue-job {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 22rem;
+}
+.candidates-person-name,
+.queue-person-name a {
+  color: var(--color-text);
+  font-weight: var(--weight-medium);
+}
+.candidates-person-name:hover,
+.queue-person-name a:hover,
+.queue-job a:hover {
+  color: var(--color-accent-text);
+}
+.queue-job a {
+  color: var(--color-text);
+}
+.candidates-person-headline,
+.queue-person-sub {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.candidates-email {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 16rem;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+/* The copy button appears on hover or focus, so a page of emails is not a column of icons. */
+.candidates-email .icon-btn {
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.data-table tr:hover .candidates-email .icon-btn,
+.data-table tr:focus-within .candidates-email .icon-btn {
+  opacity: 1;
+}
+@media (hover: none) {
+  .candidates-email .icon-btn {
+    opacity: 1;
+  }
+}
+
+/* ---------- grid view ---------- */
+
+.candidates-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+.candidates-grid-empty {
+  padding: var(--space-4);
+}
+
+.candidates-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
+  animation: fade-in var(--duration-base) var(--ease-out);
+}
+.candidates-card:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(calc(-1 * var(--space-px)));
+}
+.candidates-card:focus-within {
+  border-color: var(--color-accent-border);
+}
+.candidates-card[data-selected="true"] {
+  border-color: var(--color-accent-border);
+  background: var(--color-accent-soft);
+}
+.candidates-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.candidates-card-identity {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  min-width: 0;
+}
+.candidates-card-name {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+}
+.candidates-card-link {
+  color: var(--color-text);
+}
+.candidates-card-link:focus-visible {
+  outline: none;
+}
+/* The name's link covers the card, so the whole card opens the profile. */
+.candidates-card-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.candidates-card:has(.candidates-card-link:focus-visible) {
+  box-shadow: var(--focus-ring);
+}
+.candidates-card-headline {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.candidates-card-select {
+  position: relative;
+  z-index: var(--z-raised);
+  display: inline-flex;
+  padding: var(--space-1);
+}
+.candidates-card-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.candidates-card-facts li {
+  min-width: 0;
+}
+.candidates-card-foot {
+  margin: auto 0 0;
+}
+
+/* ======================================================================== profile */
+
+.candidates-kpi-score {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.candidates-skeleton-head {
+  flex: 1;
+}
+
+.candidates-contact {
+  row-gap: var(--space-3);
+}
+.candidates-contact dd {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.candidates-contact dd a {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.candidates-app-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.candidates-app-list-loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5);
+}
+
+.candidates-app {
+  /* Lines details up under the job title, past the score ring (a 44px ring). */
+  --candidates-app-indent: calc(var(--control-lg) + var(--space-3));
+  padding: var(--space-4) var(--space-5) var(--space-2);
+  border-bottom: 1px solid var(--color-border-subtle);
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+.candidates-app:last-child {
+  border-bottom: 0;
+}
+.candidates-app[data-expanded="true"] {
+  background: var(--color-surface-sunken);
+}
+.candidates-app-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.candidates-app-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.candidates-app-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.candidates-app-job {
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+}
+.candidates-app-job:hover {
+  color: var(--color-accent-text);
+}
+.candidates-app-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+.candidates-app-stalled {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0 var(--candidates-app-indent);
+}
+.candidates-app-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 0 var(--candidates-app-indent);
+  padding: var(--space-0-5) var(--space-1-5);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+.candidates-app-toggle:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+.candidates-app-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.candidates-app-panel {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 var(--space-3) var(--candidates-app-indent);
+  animation: fade-in var(--duration-base) var(--ease-out);
+}
+.candidates-app-panel[hidden] {
+  display: none;
+}
+.candidates-app-letter {
+  margin: 0;
+  max-height: 14rem;
+  overflow-y: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+/* ======================================================================== shared application pieces */
+
+.apps-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.apps-move-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.apps-move-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  margin-bottom: var(--space-2);
+  padding: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.apps-move-option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-height: var(--control-md);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+.apps-move-option:hover {
+  background: var(--color-surface-hover);
+}
+/* The radio itself is hidden; the whole chip is the visible control. */
+.apps-move-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.apps-move-option:has(input:checked) {
+  border-color: var(--color-accent-border);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+}
+.apps-move-option-danger:has(input:checked) {
+  border-color: var(--color-danger-border);
+  background: var(--color-danger-soft);
+  color: var(--color-danger-text);
+}
+.apps-move-option:has(input:focus-visible) {
+  box-shadow: var(--focus-ring);
+}
+
+.apps-activity-message {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+/* ======================================================================== review queue */
+
+.queue-panel {
+  overflow: hidden;
+}
+.queue-tabs {
+  padding: 0 var(--space-3);
+}
+/* The toolbar sits between the tabs and their panel, so the panel needs no gap. */
+.queue-tabpanel {
+  padding-top: 0;
+}
+.queue-job-filter {
+  flex: 0 1 16rem;
+  min-width: 0;
+}
+.queue-search {
+  flex: 1 1 12rem;
+  max-width: 18rem;
+}
+.queue-note {
+  margin: 0;
+  padding: var(--space-1-5) var(--space-4) 0;
+}
+.queue-person-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+}
+
+/* Rows that will never get a score on their own: tinted, with a mark on the left edge. */
+.data-table tr.queue-row-stalled {
+  background: var(--color-warning-soft);
+}
+.data-table tr.queue-row-stalled td:first-child {
+  box-shadow: inset var(--space-0-5) 0 0 var(--color-warning);
+}
+
+/* ======================================================================== small screens */
+
+@media (max-width: 1100px) {
+  .candidates-col-joined,
+  .queue-col-applied {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .candidates-col-email,
+  .queue-hint {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .candidates-toolbar,
+  .queue-toolbar,
+  .candidates-bulkbar {
+    padding-inline: var(--space-3);
+  }
+  .candidates-search,
+  .candidates-skill,
+  .candidates-exp,
+  .queue-job-filter,
+  .queue-search {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+  .candidates-col-skills,
+  .queue-col-job {
+    display: none;
+  }
+  .candidates-bulk-scope {
+    display: none;
+  }
+  .candidates-grid {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--space-3);
+  }
+  .candidates-app {
+    padding-inline: var(--space-4);
+  }
+  .candidates-app-row {
+    flex-wrap: wrap;
+  }
+  .candidates-app-row .apps-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+    padding-left: var(--candidates-app-indent);
+  }
+  .candidates-app-stalled,
+  .candidates-app-toggle,
+  .candidates-app-panel {
+    margin-left: 0;
+  }
+}

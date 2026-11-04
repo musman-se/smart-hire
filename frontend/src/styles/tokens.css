@@ -1,0 +1,368 @@
+/*
+ * Design tokens — the only place a raw colour, size or duration is written down.
+ *
+ * Two layers. Primitives (--gray-500, --teal-600) are fixed scales, the same in every
+ * theme. Semantic tokens (--color-text, --color-surface) say what a value is FOR, and
+ * each theme maps them onto primitives. Components and pages use semantic tokens only,
+ * so a theme switch never needs a component to know which theme is on.
+ *
+ * Theme selection: data-theme="light" | "dark" on <html>. A small inline script in
+ * index.html sets it from the saved choice (or the system setting) before the first
+ * paint, so there is no flash of the wrong theme; ThemeProvider keeps it in step after.
+ *
+ * Contrast: every text token pair below meets WCAG AA (4.5:1) on the surfaces it is
+ * meant for — text-subtle included, which is why it is darker than it might look.
+ */
+
+:root {
+  /* ---------- primitives: neutrals (slightly cool, a hint of teal) ---------- */
+  --gray-0: #ffffff;
+  --gray-25: #fbfcfc;
+  --gray-50: #f5f7f7;
+  --gray-100: #eceff0;
+  --gray-200: #dfe4e5;
+  --gray-300: #c8d0d1;
+  --gray-400: #97a3a4;
+  --gray-500: #6a7778;
+  --gray-600: #4d595a;
+  --gray-700: #364041;
+  --gray-750: #2a3334;
+  --gray-800: #1f2728;
+  --gray-850: #182021;
+  --gray-900: #121819;
+  --gray-950: #0b1011;
+
+  /* ---------- primitives: brand teal ---------- */
+  --teal-50: #effcf9;
+  --teal-100: #ccf7ee;
+  --teal-200: #9aeedd;
+  --teal-300: #5fdfc8;
+  --teal-400: #2fd6a5;
+  --teal-500: #14b8a6;
+  --teal-600: #0d9488;
+  --teal-700: #0f766e;
+  --teal-800: #115e59;
+  --teal-900: #134e4a;
+  --teal-950: #042f2e;
+
+  /* ---------- primitives: hues for status and stages ---------- */
+  --green-100: #dcfce7;
+  --green-300: #86efac;
+  --green-500: #22c55e;
+  --green-700: #15803d;
+  --amber-100: #fef3c7;
+  --amber-300: #fcd34d;
+  --amber-500: #f59e0b;
+  --amber-800: #92400e;
+  --red-100: #fee2e2;
+  --red-300: #fca5a5;
+  --red-500: #ef4444;
+  --red-700: #b91c1c;
+  --blue-100: #dbeafe;
+  --blue-300: #93c5fd;
+  --blue-500: #3b82f6;
+  --blue-700: #1d4ed8;
+  --violet-100: #ede9fe;
+  --violet-300: #c4b5fd;
+  --violet-500: #8b5cf6;
+  --violet-700: #6d28d9;
+  --cyan-100: #cffafe;
+  --cyan-300: #67e8f9;
+  --cyan-800: #155e75;
+
+  /* ---------- typography ---------- */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Cascadia Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas,
+    monospace;
+
+  --text-2xs: 0.6875rem; /* 11px */
+  --text-xs: 0.75rem; /* 12px */
+  --text-sm: 0.8125rem; /* 13px */
+  --text-base: 0.875rem; /* 14px — body copy */
+  --text-md: 1rem; /* 16px */
+  --text-lg: 1.125rem; /* 18px */
+  --text-xl: 1.25rem; /* 20px */
+  --text-2xl: 1.5rem; /* 24px */
+  --text-3xl: 1.875rem; /* 30px */
+  --text-4xl: 2.25rem; /* 36px */
+
+  --leading-tight: 1.25;
+  --leading-snug: 1.4;
+  --leading-normal: 1.55;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  --tracking-tight: -0.015em;
+  --tracking-wide: 0.06em;
+
+  /* ---------- spacing: a 4px grid ---------- */
+  --space-0: 0;
+  --space-px: 1px;
+  --space-0-5: 0.125rem; /* 2px */
+  --space-1: 0.25rem; /* 4px */
+  --space-1-5: 0.375rem; /* 6px */
+  --space-2: 0.5rem; /* 8px */
+  --space-2-5: 0.625rem; /* 10px */
+  --space-3: 0.75rem; /* 12px */
+  --space-4: 1rem; /* 16px */
+  --space-5: 1.25rem; /* 20px */
+  --space-6: 1.5rem; /* 24px */
+  --space-8: 2rem; /* 32px */
+  --space-10: 2.5rem; /* 40px */
+  --space-12: 3rem; /* 48px */
+  --space-16: 4rem; /* 64px */
+  --space-20: 5rem; /* 80px */
+
+  /* ---------- radius ---------- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 999px;
+
+  /* ---------- control sizes (buttons, inputs share one height per size) ---------- */
+  --control-sm: 1.75rem; /* 28px */
+  --control-md: 2.25rem; /* 36px */
+  --control-lg: 2.75rem; /* 44px */
+
+  /* ---------- layout ---------- */
+  --sidebar-width: 15rem;
+  --sidebar-width-collapsed: 3.75rem;
+  --topbar-height: 3.5rem;
+  --content-max: 76rem;
+
+  /* ---------- stacking ---------- */
+  --z-base: 0;
+  --z-raised: 1;
+  --z-sticky: 10;
+  --z-sidebar: 20;
+  --z-topbar: 30;
+  --z-dropdown: 40;
+  --z-drawer: 50;
+  --z-modal: 60;
+  --z-popover: 65;
+  --z-toast: 70;
+  --z-tooltip: 80;
+
+  /* ---------- motion ---------- */
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 280ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+/* ---------- light theme (the default) ---------- */
+
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --color-bg: var(--gray-50);
+  --color-surface: var(--gray-0);
+  --color-surface-raised: var(--gray-0);
+  --color-surface-sunken: var(--gray-100);
+  --color-surface-hover: var(--gray-100);
+  --color-surface-active: var(--gray-200);
+  --color-overlay: rgb(11 16 17 / 0.45);
+  --color-sidebar: var(--gray-25);
+
+  --color-border: var(--gray-200);
+  --color-border-subtle: var(--gray-100);
+  --color-border-strong: var(--gray-300);
+  /* Form-control boundaries need 3:1 against the surface (WCAG 1.4.11); 4.6:1 on white. */
+  --color-border-control: var(--gray-500);
+
+  --color-text: var(--gray-900);
+  --color-text-muted: var(--gray-600);
+  --color-text-subtle: #5f6c6d; /* 4.9:1 on white, 4.6:1 on --color-bg */
+  --color-text-disabled: var(--gray-400);
+  --color-text-inverse: var(--gray-0);
+
+  --color-accent: var(--teal-700);
+  --color-accent-hover: var(--teal-800);
+  --color-accent-fg: var(--gray-0);
+  --color-accent-soft: var(--teal-50);
+  --color-accent-soft-hover: var(--teal-100);
+  --color-accent-text: var(--teal-700);
+  --color-accent-border: var(--teal-300);
+
+  --color-success: var(--green-700);
+  --color-success-soft: var(--green-100);
+  --color-success-text: #166534;
+  --color-success-border: var(--green-300);
+  --color-warning: var(--amber-500);
+  --color-warning-soft: var(--amber-100);
+  --color-warning-text: var(--amber-800);
+  --color-warning-border: var(--amber-300);
+  --color-danger: var(--red-700);
+  --color-danger-solid: var(--red-700);
+  --color-danger-solid-hover: #991b1b;
+  --color-danger-fg: var(--gray-0);
+  --color-danger-soft: var(--red-100);
+  --color-danger-text: var(--red-700);
+  --color-danger-border: var(--red-300);
+  --color-info: var(--blue-700);
+  --color-info-soft: var(--blue-100);
+  --color-info-text: var(--blue-700);
+  --color-info-border: var(--blue-300);
+  --color-violet-soft: var(--violet-100);
+  --color-violet-text: var(--violet-700);
+  --color-cyan-soft: var(--cyan-100);
+  --color-cyan-text: var(--cyan-800);
+  --color-neutral-soft: var(--gray-100);
+  --color-neutral-text: var(--gray-600);
+
+  --color-focus: var(--teal-600);
+  --color-selection: rgb(20 184 166 / 0.22);
+  --color-skeleton: var(--gray-100);
+  --color-skeleton-shine: var(--gray-50);
+
+  --shadow-xs: 0 1px 2px rgb(16 24 24 / 0.05);
+  --shadow-sm: 0 1px 3px rgb(16 24 24 / 0.08), 0 1px 2px rgb(16 24 24 / 0.04);
+  --shadow-md: 0 4px 12px -2px rgb(16 24 24 / 0.08), 0 2px 4px -2px rgb(16 24 24 / 0.05);
+  --shadow-lg: 0 12px 28px -6px rgb(16 24 24 / 0.14), 0 4px 8px -4px rgb(16 24 24 / 0.06);
+  --shadow-xl: 0 24px 56px -12px rgb(16 24 24 / 0.24);
+}
+
+/* ---------- dark theme ---------- */
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-bg: var(--gray-950);
+  --color-surface: var(--gray-900);
+  --color-surface-raised: var(--gray-850);
+  --color-surface-sunken: #080c0d;
+  --color-surface-hover: var(--gray-800);
+  --color-surface-active: var(--gray-750);
+  --color-overlay: rgb(0 0 0 / 0.6);
+  --color-sidebar: #0e1415;
+
+  --color-border: var(--gray-800);
+  --color-border-subtle: var(--gray-850);
+  --color-border-strong: var(--gray-700);
+  /* gray-500 is under 4:1 on dark surfaces; this is 4.5:1 on --color-surface-raised. */
+  --color-border-control: #7b8889;
+
+  --color-text: #e8efee;
+  --color-text-muted: #a3b1b0;
+  --color-text-subtle: #8a9897; /* 5.9:1 on --color-surface */
+  --color-text-disabled: var(--gray-600);
+  --color-text-inverse: var(--gray-950);
+
+  --color-accent: var(--teal-400);
+  --color-accent-hover: var(--teal-300);
+  --color-accent-fg: var(--teal-950);
+  --color-accent-soft: rgb(47 214 165 / 0.12);
+  --color-accent-soft-hover: rgb(47 214 165 / 0.2);
+  --color-accent-text: var(--teal-300);
+  --color-accent-border: rgb(47 214 165 / 0.4);
+
+  --color-success: var(--green-500);
+  --color-success-soft: rgb(34 197 94 / 0.14);
+  --color-success-text: var(--green-300);
+  --color-success-border: rgb(34 197 94 / 0.4);
+  --color-warning: var(--amber-500);
+  --color-warning-soft: rgb(245 158 11 / 0.14);
+  --color-warning-text: var(--amber-300);
+  --color-warning-border: rgb(245 158 11 / 0.4);
+  --color-danger: var(--red-500);
+  --color-danger-solid: #dc2626; /* white text 4.8:1; red-500 would be 3.8:1 */
+  --color-danger-solid-hover: var(--red-700);
+  --color-danger-fg: var(--gray-0);
+  --color-danger-soft: rgb(239 68 68 / 0.14);
+  --color-danger-text: var(--red-300);
+  --color-danger-border: rgb(239 68 68 / 0.45);
+  --color-info: var(--blue-500);
+  --color-info-soft: rgb(59 130 246 / 0.15);
+  --color-info-text: var(--blue-300);
+  --color-info-border: rgb(59 130 246 / 0.45);
+  --color-violet-soft: rgb(139 92 246 / 0.16);
+  --color-violet-text: var(--violet-300);
+  --color-cyan-soft: rgb(103 232 249 / 0.12);
+  --color-cyan-text: var(--cyan-300);
+  --color-neutral-soft: var(--gray-800);
+  --color-neutral-text: #a3b1b0;
+
+  --color-focus: var(--teal-400);
+  --color-selection: rgb(47 214 165 / 0.25);
+  --color-skeleton: var(--gray-800);
+  --color-skeleton-shine: var(--gray-750);
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.5), 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-md: 0 6px 16px -4px rgb(0 0 0 / 0.55), 0 0 0 1px rgb(255 255 255 / 0.03);
+  --shadow-lg: 0 16px 36px -8px rgb(0 0 0 / 0.65), 0 0 0 1px rgb(255 255 255 / 0.04);
+  --shadow-xl: 0 28px 64px -12px rgb(0 0 0 / 0.75), 0 0 0 1px rgb(255 255 255 / 0.05);
+}
+
+/* ---------- semantic mappings shared by both themes ---------- */
+
+:root {
+  /* Focus ring: a gap in the page colour, then the ring, so it reads on any fill. */
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-focus);
+  --focus-ring-inset: inset 0 0 0 2px var(--color-focus);
+
+  /* Application stages: fg / bg pairs, one hue per step of the pipeline. */
+  --stage-applied-fg: var(--color-info-text);
+  --stage-applied-bg: var(--color-info-soft);
+  --stage-screening-fg: var(--color-cyan-text);
+  --stage-screening-bg: var(--color-cyan-soft);
+  --stage-interview-fg: var(--color-violet-text);
+  --stage-interview-bg: var(--color-violet-soft);
+  --stage-offer-fg: var(--color-warning-text);
+  --stage-offer-bg: var(--color-warning-soft);
+  --stage-hired-fg: var(--color-success-text);
+  --stage-hired-bg: var(--color-success-soft);
+  --stage-rejected-fg: var(--color-danger-text);
+  --stage-rejected-bg: var(--color-danger-soft);
+  --stage-withdrawn-fg: var(--color-neutral-text);
+  --stage-withdrawn-bg: var(--color-neutral-soft);
+
+  /* Job statuses. */
+  --status-draft-fg: var(--color-neutral-text);
+  --status-draft-bg: var(--color-neutral-soft);
+  --status-processing-fg: var(--color-warning-text);
+  --status-processing-bg: var(--color-warning-soft);
+  --status-published-fg: var(--color-success-text);
+  --status-published-bg: var(--color-success-soft);
+  --status-publish_failed-fg: var(--color-danger-text);
+  --status-publish_failed-bg: var(--color-danger-soft);
+  --status-closed-fg: var(--color-neutral-text);
+  --status-closed-bg: var(--color-neutral-soft);
+
+  /* Match score bands (ScoreRing, .score-*). */
+  --score-high: var(--color-success);
+  --score-mid: var(--color-warning);
+  --score-low: var(--color-danger);
+}
+
+/* Motion off means off: tokens collapse, so every transition built on them does too. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0.01ms;
+    --duration-base: 0.01ms;
+    --duration-slow: 0.01ms;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+  /* Progress must still read as "working", or a spinner freezes into a broken ring:
+     rotation becomes a slow fade, which is not a vestibular trigger. */
+  .spinner,
+  .pill-processing .pill-dot,
+  .pipeline-card.is-pending::before {
+    animation: pulse 1.6s ease-in-out infinite !important;
+  }
+}
