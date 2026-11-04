@@ -9,6 +9,16 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.models import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.jobs.enums import EmploymentType, JobStatus
 
+# Text bounds. The API checks them first, so a client gets a 422 naming the field; the
+# CHECK constraints below enforce the same numbers for every other writer (a script, a
+# psql session, the workflows). The description cap keeps a posting inside what the
+# publishing workflow analyses comfortably. Changing a number needs a migration too:
+# autogenerate does not compare CHECK constraints, test_migrations does.
+TITLE_MIN_LENGTH = 3
+TITLE_MAX_LENGTH = 200
+DESCRIPTION_MIN_LENGTH = 10
+DESCRIPTION_MAX_LENGTH = 20_000
+
 if TYPE_CHECKING:
     from app.applications.models import Application
     from app.skills.models import Skill
@@ -17,7 +27,7 @@ if TYPE_CHECKING:
 class Job(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "jobs"
 
-    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    title: Mapped[str] = mapped_column(String(TITLE_MAX_LENGTH), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
 
     department: Mapped[str | None] = mapped_column(String(100))
@@ -71,6 +81,12 @@ class Job(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __table_args__ = (
         # Named without the "ck_jobs_" prefix: the naming convention adds it.
+        CheckConstraint(f"char_length(title) >= {TITLE_MIN_LENGTH}", name="title_length"),
+        CheckConstraint(
+            f"char_length(description) BETWEEN {DESCRIPTION_MIN_LENGTH}"
+            f" AND {DESCRIPTION_MAX_LENGTH}",
+            name="description_length",
+        ),
         CheckConstraint("min_experience_years >= 0", name="min_experience_non_negative"),
         CheckConstraint(
             "max_applications IS NULL OR max_applications > 0",

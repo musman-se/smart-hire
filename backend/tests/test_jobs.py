@@ -2,8 +2,17 @@
 
 import uuid
 
+import pytest
 from httpx import AsyncClient
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.jobs.models import (
+    DESCRIPTION_MAX_LENGTH,
+    DESCRIPTION_MIN_LENGTH,
+    TITLE_MIN_LENGTH,
+    Job,
+)
 from tests.factories import make_job
 
 
@@ -141,3 +150,30 @@ async def test_patch_rejects_null_for_a_required_field(client: AsyncClient) -> N
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
+
+
+@pytest.mark.parametrize(
+    ("title", "description", "constraint"),
+    [
+        ("Long Role", "x" * (DESCRIPTION_MAX_LENGTH + 1), "ck_jobs_description_length"),
+        ("Short Role", "x" * (DESCRIPTION_MIN_LENGTH - 1), "ck_jobs_description_length"),
+        ("x" * (TITLE_MIN_LENGTH - 1), "A perfectly ordinary description.", "ck_jobs_title_length"),
+    ],
+)
+async def test_the_database_refuses_text_outside_the_bounds(
+    session: AsyncSession, title: str, description: str, constraint: str
+) -> None:
+    """The API's 422 covers requests; the check constraints cover every other writer —
+    a script, a pgAdmin edit, a future service."""
+    session.add(Job(title=title, description=description))
+
+    with pytest.raises(IntegrityError, match=constraint):
+        await session.commit()
+    await session.rollback()
+
+
+async def test_a_description_at_the_limit_is_stored(client: AsyncClient) -> None:
+    """The bound is inclusive in both places: what the API accepts, the database keeps."""
+    job = await make_job(client, publish=False, description="x" * DESCRIPTION_MAX_LENGTH)
+
+    assert len(job["description"]) == DESCRIPTION_MAX_LENGTH

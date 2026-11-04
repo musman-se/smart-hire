@@ -2,7 +2,8 @@
 
 Deliberately separate from app.jobs.models. The model has columns a client must never
 set (status, published_at) and the API has validation the database does not express
-(title length, at least one non-blank skill).
+(at least one non-blank skill). The text bounds live in the model, which enforces them
+too; they are checked here first so a client gets a 422 rather than a 500.
 """
 
 import uuid
@@ -12,17 +13,20 @@ from pydantic import Field, field_validator
 
 from app.core.schemas import InputModel, PatchModel, ReadModel
 from app.jobs.enums import EmploymentType, JobStatus
+from app.jobs.models import (
+    DESCRIPTION_MAX_LENGTH,
+    DESCRIPTION_MIN_LENGTH,
+    TITLE_MAX_LENGTH,
+    TITLE_MIN_LENGTH,
+)
 from app.skills.schemas import normalise_skill_names
 
-# Bounds that keep a value inside its column, and a description inside what the
-# publishing workflow analyses comfortably.
-DESCRIPTION_MAX_LENGTH = 20_000
 MAX_APPLICATIONS_CEILING = 100_000
 
 
 class JobBase(InputModel):
-    title: str = Field(min_length=3, max_length=200)
-    description: str = Field(min_length=10)
+    title: str = Field(min_length=TITLE_MIN_LENGTH, max_length=TITLE_MAX_LENGTH)
+    description: str = Field(min_length=DESCRIPTION_MIN_LENGTH)
     department: str | None = Field(default=None, max_length=100)
     location: str | None = Field(default=None, max_length=120)
     employment_type: EmploymentType = EmploymentType.FULL_TIME
@@ -42,7 +46,7 @@ class JobCreate(JobBase):
 
     # The caps apply to input only. JobRead shares JobBase, and it must keep reading
     # every row already stored — including any saved before these limits existed.
-    description: str = Field(min_length=10, max_length=DESCRIPTION_MAX_LENGTH)
+    description: str = Field(min_length=DESCRIPTION_MIN_LENGTH, max_length=DESCRIPTION_MAX_LENGTH)
     max_applications: int | None = Field(default=None, gt=0, le=MAX_APPLICATIONS_CEILING)
 
 
@@ -58,8 +62,12 @@ class JobUpdate(PatchModel):
         {"title", "description", "employment_type", "required_skills", "min_experience_years"}
     )
 
-    title: str | None = Field(default=None, min_length=3, max_length=200)
-    description: str | None = Field(default=None, min_length=10, max_length=DESCRIPTION_MAX_LENGTH)
+    title: str | None = Field(
+        default=None, min_length=TITLE_MIN_LENGTH, max_length=TITLE_MAX_LENGTH
+    )
+    description: str | None = Field(
+        default=None, min_length=DESCRIPTION_MIN_LENGTH, max_length=DESCRIPTION_MAX_LENGTH
+    )
     department: str | None = Field(default=None, max_length=100)
     location: str | None = Field(default=None, max_length=120)
     employment_type: EmploymentType | None = None
