@@ -1,0 +1,20 @@
+/*
+ * The one stylesheet main.tsx imports. Order matters: tokens first, then element
+ * defaults, the shell, shared components, and last the per-page files — so a page can
+ * refine a component without raising specificity.
+ */
+
+@import "./tokens.css";
+@import "./base.css";
+@import "./layout.css";
+@import "./components.css";
+
+/* One file per feature area. Each team writes only in its own. */
+@import "./pages/auth.css";
+@import "./pages/dashboard.css";
+@import "./pages/jobs.css";
+@import "./pages/job-detail.css";
+@import "./pages/pipeline.css";
+@import "./pages/candidate.css";
+@import "./pages/candidates.css";
+@import "./pages/palette.css";

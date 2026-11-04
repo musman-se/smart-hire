@@ -1,0 +1,326 @@
+/*
+ * Command palette, shortcuts dialog and the 404 page.
+ * Files: components/CommandPalette.tsx, components/palette/*, components/ShortcutsDialog.tsx,
+ * pages/NotFoundPage.tsx
+ *
+ * The palette refines the base .cmdk-* styles in components.css; it does not replace them.
+ */
+
+/* ======================================================================== palette */
+
+.palette {
+  max-height: min(70vh, 34rem);
+}
+
+.palette-close {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+.palette-close:focus-visible {
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.palette-list {
+  scroll-padding: var(--space-8) 0 var(--space-2);
+}
+
+.palette-group + .palette-group {
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.palette-item {
+  min-height: 2.75rem;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+/* The keyboard highlight is the "focus" here: make it as visible as a focus ring. */
+.palette-item[aria-selected="true"] {
+  background: var(--color-accent-soft);
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+.palette-item > .avatar {
+  flex: none;
+}
+
+.palette-item-text {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  overflow: hidden;
+}
+.palette-item-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-weight: var(--weight-medium);
+}
+.palette-item-description {
+  flex: 1 1 0;
+  min-width: 0;
+  color: var(--color-text-subtle);
+  font-size: var(--text-xs);
+}
+
+.palette-item-meta {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--color-text-subtle);
+  font-size: var(--text-xs);
+}
+.palette-kind {
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+}
+
+.palette-check {
+  flex: none;
+  color: var(--color-accent-text);
+}
+.palette-shortcut {
+  flex: none;
+}
+.palette-enter {
+  flex: none;
+  color: var(--color-accent-text);
+  animation: fade-in var(--duration-fast) var(--ease-out);
+}
+
+.palette-mark {
+  background: none;
+  color: var(--color-accent-text);
+  font-weight: var(--weight-semibold);
+  text-decoration: underline;
+  text-decoration-color: var(--color-accent-border);
+  text-underline-offset: 0.2em;
+}
+
+.palette-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2.5rem;
+  padding: 0 var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.palette-status-error {
+  color: var(--color-danger-text);
+}
+
+.palette-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-10) var(--space-6);
+  text-align: center;
+  color: var(--color-text-subtle);
+}
+.palette-empty-title {
+  margin: var(--space-2) 0 0;
+  color: var(--color-text);
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+}
+.palette-empty-hint {
+  margin: 0;
+  max-width: 26rem;
+  font-size: var(--text-sm);
+}
+
+.palette-footer {
+  flex-wrap: wrap;
+  row-gap: var(--space-1);
+}
+.palette-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+@media (max-width: 600px) {
+  .palette-backdrop {
+    padding-top: var(--space-4);
+  }
+  .palette {
+    max-height: calc(100dvh - var(--space-8));
+  }
+  .palette-hint-wide,
+  .palette-shortcut,
+  .palette-item-description {
+    display: none;
+  }
+}
+
+/* ======================================================================== shortcuts dialog */
+
+.shortcuts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--space-5) var(--space-8);
+}
+
+.shortcuts-heading {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+}
+
+.shortcuts-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shortcuts-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 2.25rem;
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: var(--text-sm);
+}
+.shortcuts-row:last-child {
+  border-bottom: 0;
+}
+.shortcuts-row > .kbd-combo {
+  flex: none;
+}
+
+.shortcuts-platform {
+  margin: var(--space-5) 0 0;
+}
+
+/* ======================================================================== 404 */
+
+.notfound {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 36rem;
+  margin: var(--space-10) auto;
+  text-align: center;
+  animation: fade-in var(--duration-slow) var(--ease-out);
+}
+
+.notfound-art {
+  width: min(15rem, 100%);
+  height: auto;
+  margin-bottom: var(--space-4);
+}
+.notfound-art-ground {
+  fill: var(--color-surface-sunken);
+}
+.notfound-art-trail {
+  stroke: var(--color-border-strong);
+}
+.notfound-art-post {
+  fill: var(--color-border-strong);
+}
+.notfound-art-sign {
+  fill: var(--color-accent);
+}
+.notfound-art-sign-back {
+  fill: var(--color-surface-raised);
+  stroke: var(--color-border-strong);
+  stroke-width: 2;
+}
+.notfound-art-text {
+  fill: var(--color-accent-fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+}
+.notfound-art-mark {
+  stroke: var(--color-text-muted);
+}
+.notfound-art-spark {
+  fill: var(--color-accent-border);
+}
+
+.notfound-code {
+  margin: 0;
+  color: var(--color-accent-text);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+.notfound-title {
+  margin: var(--space-2) 0 var(--space-3);
+  font-size: var(--text-2xl);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+}
+.notfound-lede {
+  margin: 0;
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+}
+.notfound-path {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0 var(--space-1-5);
+  border-radius: var(--radius-xs);
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+  vertical-align: bottom;
+}
+
+.notfound-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+}
+
+.notfound-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-1);
+  margin-top: var(--space-4);
+}
+
+.notfound-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-8) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-subtle);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+.notfound-hint > .icon {
+  flex: none;
+}
+
+@media (max-width: 600px) {
+  .notfound {
+    margin-top: var(--space-4);
+  }
+  .notfound-title {
+    font-size: var(--text-xl);
+  }
+  .notfound-actions > * {
+    flex: 1 1 100%;
+  }
+}

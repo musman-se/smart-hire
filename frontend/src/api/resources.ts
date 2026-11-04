@@ -16,6 +16,7 @@ import type {
   Notification,
   Page,
   Publication,
+  Skill,
   StageChange,
   TokenPair,
   User,
@@ -71,14 +72,18 @@ export const candidatesApi = {
     api.patch<Candidate>(`/candidates/${id}`, payload),
 };
 
+export interface ApplicationFilters {
+  job_id?: string;
+  candidate_id?: string;
+  stage?: ApplicationStage | "";
+  limit?: number;
+  offset?: number;
+}
+
 export const applicationsApi = {
-  list: (filters: {
-    job_id?: string;
-    candidate_id?: string;
-    stage?: ApplicationStage | "";
-    limit?: number;
-    offset?: number;
-  }) => api.get<Page<Application>>(`/applications${toQuery({ ...filters })}`),
+  list: (filters: ApplicationFilters) =>
+    api.get<Page<Application>>(`/applications${toQuery({ ...filters })}`),
+  get: (id: string) => api.get<Application>(`/applications/${id}`),
   forJob: (jobId: string, filters: { stage?: ApplicationStage | ""; limit?: number } = {}) =>
     api.get<Page<Application>>(`/jobs/${jobId}/applications${toQuery({ ...filters })}`),
   apply: (jobId: string, payload: ApplicationCreate, idempotencyKey?: string) =>
@@ -91,6 +96,12 @@ export const applicationsApi = {
   history: (id: string) => api.get<StageChange[]>(`/applications/${id}/history`),
   notifications: (id: string) => api.get<Notification[]>(`/applications/${id}/notifications`),
   process: (id: string) => api.post<Application>(`/applications/${id}/process`),
+};
+
+/** The skills vocabulary, for autocomplete. `search` is a prefix match. */
+export const skillsApi = {
+  list: (filters: { search?: string; limit?: number; offset?: number } = {}) =>
+    api.get<Page<Skill>>(`/skills${toQuery({ ...filters })}`),
 };
 
 export interface Readiness {

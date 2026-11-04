@@ -120,22 +120,42 @@ surfaces usefully instead of vanishing.
 src/
 ├── api/
 │   ├── schema.d.ts    generated — do not edit
-│   ├── types.ts       friendly aliases over the generated types
+│   ├── types.ts       friendly aliases over the generated types, plus mirrored rules
 │   ├── client.ts      fetch wrapper, error envelope, ApiError, token refresh
 │   └── resources.ts   one function per endpoint, no React
 ├── auth/
 │   ├── session.ts        where the tokens live
 │   ├── AuthProvider.tsx  who is signed in
-│   └── RequireAuth.tsx   the route guard
+│   ├── RequireAuth.tsx   the sign-in guard
+│   └── RequireRole.tsx   the role guard, and each role's home
 ├── hooks/
 │   ├── queries.ts            TanStack Query hooks, cache keys, polling rules
-│   └── useIdempotencyKey.ts  one key per intended action
-├── components/        Layout, pills, modal, pagination, error notice
-└── pages/             Login, Register, Jobs, JobDetail, Candidates, CandidateDetail
+│   ├── use*Extras.ts         a feature's extra queries, on the same keys
+│   └── use….ts               URL state, hotkeys, theme, the clock, unsaved-changes guard
+├── lib/               formatting, skill matching, hotkey parsing — pure, tested
+├── components/
+│   ├── ui/            the design system: one import for every primitive (see its README)
+│   ├── Layout.tsx     the shell: sidebar, topbar, command palette, shortcuts
+│   └── <feature>/     a page's parts and its pure logic (pipeline/model.ts, …)
+├── pages/             one file per route; recruiter/ and candidate/ hold role-only pages
+├── styles/            tokens, base, layout and components, then one file per page area
+└── router.tsx         the route map; every page is its own lazily loaded chunk
 ```
 
 `resources.ts` has no React in it, so the API layer is testable and reusable without
-mounting components.
+mounting components. Likewise each feature keeps its rules in a plain `.ts` module next
+to its components, tested on their own.
+
+## Tests
+
+```bash
+npm test                  # Vitest + Testing Library, in jsdom
+npx tsc --noEmit          # the typecheck the build also runs
+```
+
+Pure modules (board rules, funnel maths, form validation, fuzzy search) are unit tested;
+components with real interaction (the pipeline board, the stage dialog, the job editor,
+the command palette) are tested through what a user does with them.
 
 ## Known environment issues
 
@@ -203,5 +223,6 @@ end every session as stolen. They share one exchange instead.
 
 ## Not built
 
-No optimistic updates, no tests: with the review deadline close, the effort went into
-the backend suite where the business rules live.
+No server-side sorting: the API orders by newest first, so table sorting is client-side
+over the loaded page and the UI says so ("latest 100"). No push updates: the console
+polls the few things that change on their own (see above).

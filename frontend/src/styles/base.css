@@ -1,0 +1,252 @@
+/*
+ * Element defaults: reset, typography, and the look of bare form elements.
+ *
+ * Element selectors are wrapped in :where() so they carry zero specificity — any class
+ * a component or page adds wins without a fight, and nothing needs !important.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  scroll-padding-top: calc(var(--topbar-height) + var(--space-4));
+  /* The scrollbar's lane is always reserved, so the layout does not jump sideways when
+     it comes and goes: a short tab, or an overlay locking the page's scroll. */
+  scrollbar-gutter: stable;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--color-selection);
+}
+
+:where(h1, h2, h3, h4, h5, h6) {
+  margin: 0;
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+  color: var(--color-text);
+}
+:where(h1) {
+  font-size: var(--text-2xl);
+}
+:where(h2) {
+  font-size: var(--text-lg);
+}
+:where(h3) {
+  font-size: var(--text-md);
+}
+:where(h4) {
+  font-size: var(--text-base);
+}
+
+:where(p) {
+  margin: 0;
+}
+
+:where(a) {
+  color: var(--color-accent-text);
+  text-decoration: none;
+  border-radius: var(--radius-xs);
+}
+:where(a:hover) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+:where(code, kbd, samp, pre) {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+:where(img, svg, video) {
+  display: block;
+  max-width: 100%;
+}
+:where(svg) {
+  flex-shrink: 0;
+}
+/* An <Icon> in running text (a note, a link, a hint) sits on the line beside its words
+   rather than on a line of its own. In flex and grid rows, where most icons live,
+   display does not apply, so this only changes text. */
+:where(svg.icon) {
+  display: inline-block;
+  vertical-align: -0.125em;
+}
+
+:where(hr) {
+  border: 0;
+  border-top: 1px solid var(--color-border);
+  margin: var(--space-4) 0;
+}
+
+:where(ul, ol) {
+  margin: 0;
+}
+
+/* One focus treatment for everything keyboard-reachable. Mouse clicks do not show it. */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---------- form elements ---------- */
+
+:where(button, input, select, textarea) {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
+:where(button) {
+  cursor: pointer;
+}
+:where(button:disabled) {
+  cursor: not-allowed;
+}
+
+/* Text inputs, selects and textareas look the same whether they come from <Input> or
+   are written bare in a page. */
+:where(
+    input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"]),
+    select,
+    textarea
+  ),
+.input {
+  width: auto;
+  min-width: 0;
+  min-height: var(--control-md);
+  padding: var(--space-1-5) var(--space-3);
+  /* background-color, not the shorthand: the shorthand would wipe a select's chevron. */
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: var(--text-base);
+  line-height: var(--leading-snug);
+  box-shadow: var(--shadow-xs);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+:where(input, select, textarea):hover:not(:disabled),
+.input:hover:not(:disabled) {
+  border-color: var(--color-text-subtle);
+}
+:where(input, select, textarea):focus-visible,
+:where(input, select, textarea):focus,
+.input:focus {
+  outline: none;
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 3px var(--color-selection);
+}
+:where(input, select, textarea):disabled,
+.input:disabled {
+  background-color: var(--color-surface-sunken);
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+}
+:where(input, textarea)::placeholder {
+  color: var(--color-text-subtle);
+  opacity: 1;
+}
+:where(textarea) {
+  min-height: 5.5rem;
+  resize: vertical;
+  line-height: var(--leading-normal);
+}
+/* select.input out-ranks .input and its size variants (.input-sm resets padding), so a
+   <Select> keeps room for the chevron as a bare <select> does. */
+:where(select),
+select.input {
+  appearance: none;
+  padding-right: var(--space-8);
+  /* A chevron from two gradients: tinted by a token, so it follows the theme. */
+  background-image: linear-gradient(45deg, transparent 50%, var(--color-text-muted) 50%),
+    linear-gradient(135deg, var(--color-text-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 15px) 52%,
+    calc(100% - 10px) 52%;
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-repeat: no-repeat;
+}
+/* Not :where(): an invalid field keeps its danger border through hover and focus, so
+   each state must out-rank (or tie and follow) the matching .input rule above. */
+[aria-invalid="true"],
+[aria-invalid="true"]:focus,
+[aria-invalid="true"]:hover:not(:disabled) {
+  border-color: var(--color-danger);
+}
+[aria-invalid="true"]:focus {
+  box-shadow: 0 0 0 3px var(--color-danger-soft);
+}
+
+:where(input[type="checkbox"], input[type="radio"]) {
+  accent-color: var(--color-accent);
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+}
+
+/* ---------- tables ---------- */
+
+:where(table) {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--text-base);
+}
+:where(th) {
+  text-align: left;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-muted);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+  background: var(--color-surface);
+}
+:where(td) {
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--color-border-subtle);
+  vertical-align: middle;
+}
+:where(tbody tr:last-child td) {
+  border-bottom: 0;
+}
+:where(tbody tr):hover {
+  background: var(--color-surface-hover);
+}
+
+/* Forced-colors mode drops box-shadow, which is how every focus ring here is drawn, so
+   a real outline comes back in the system highlight colour. !important because the
+   component rules that set `outline: none` are more specific, and this keeps the fix in
+   one place; it applies only under forced colours. */
+@media (forced-colors: active) {
+  :focus-visible,
+  :where(input, select, textarea):focus,
+  .input:focus {
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px;
+  }
+}

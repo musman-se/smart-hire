@@ -1,0 +1,616 @@
+/*
+ * The app shell (sidebar, topbar, main), page-level structure, and layout utilities.
+ * The breakpoint where the sidebar becomes a drawer (900px) is mirrored in
+ * components/Layout.tsx as MOBILE_QUERY — change both together.
+ */
+
+/* ---------- shell ---------- */
+
+.app-shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  min-height: 100vh;
+  transition: grid-template-columns var(--duration-slow) var(--ease-out);
+}
+.app-shell[data-sidebar="collapsed"] {
+  grid-template-columns: var(--sidebar-width-collapsed) minmax(0, 1fr);
+}
+
+.skip-link {
+  position: fixed;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: var(--z-tooltip);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  font-weight: var(--weight-semibold);
+  transform: translateY(-200%);
+}
+.skip-link:focus {
+  transform: none;
+}
+
+.app-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* ---------- sidebar ---------- */
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sidebar);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--color-sidebar);
+  border-right: 1px solid var(--color-border);
+  overflow: hidden;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--topbar-height);
+  padding: 0 var(--space-3) 0 var(--space-4);
+  flex-shrink: 0;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: var(--weight-bold);
+  font-size: var(--text-md);
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+.brand:hover {
+  text-decoration: none;
+}
+.brand-text span {
+  color: var(--color-accent-text);
+}
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--teal-400), var(--teal-700));
+  color: var(--gray-0);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  flex-shrink: 0;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  padding: var(--space-2) var(--space-2);
+  overflow-y: auto;
+  flex: 1;
+}
+
+.nav-section-label {
+  padding: var(--space-4) var(--space-3) var(--space-1);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-text-subtle);
+  white-space: nowrap;
+}
+
+.nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 2.125rem;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+.nav-item:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+  text-decoration: none;
+}
+.nav-item.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+}
+.nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--space-2));
+  top: 25%;
+  bottom: 25%;
+  width: 3px;
+  border-radius: 0 var(--radius-full) var(--radius-full) 0;
+  background: var(--color-accent);
+}
+.nav-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The collapse toggle is a nav-item-shaped button. */
+button.nav-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Only rendered in the drawer. */
+.sidebar-close {
+  margin-left: auto;
+}
+
+/* In the collapsed rail each item sits inside a Tooltip anchor; the anchor has to
+   stretch like the item would, or the hover and active backgrounds shrink to the icon. */
+.sidebar .tooltip-anchor {
+  display: flex;
+}
+.sidebar .tooltip-anchor > .nav-item {
+  flex: 1;
+}
+.rail-tooltip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Collapsed: icons only; labels stay in the DOM for screen readers via aria-label. */
+.app-shell[data-sidebar="collapsed"] .sidebar :is(.nav-item-label, .nav-section-label, .brand-text) {
+  display: none;
+}
+.app-shell[data-sidebar="collapsed"] .nav-item {
+  justify-content: center;
+  padding: 0;
+}
+.app-shell[data-sidebar="collapsed"] .sidebar-header {
+  justify-content: center;
+  padding: 0;
+}
+
+/* ---------- topbar ---------- */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-topbar);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--topbar-height);
+  padding: 0 var(--space-6);
+  background: color-mix(in srgb, var(--color-bg) 85%, transparent);
+  backdrop-filter: saturate(1.4) blur(10px);
+  border-bottom: 1px solid var(--color-border);
+}
+/* Scoped to .topbar so it out-ranks the components' own display (.icon-btn). */
+.topbar .topbar-mobile-only {
+  display: none;
+}
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.search-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: min(22rem, 100%);
+  height: var(--control-md);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-subtle);
+  font-size: var(--text-sm);
+  text-align: left;
+  box-shadow: var(--shadow-xs);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.search-trigger:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-muted);
+}
+.search-trigger-label {
+  flex: 1;
+}
+
+/* ---------- health indicator ---------- */
+
+.health {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-sm);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+.dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--color-text-subtle);
+  flex-shrink: 0;
+}
+.dot.up {
+  background: var(--color-success);
+  box-shadow: 0 0 0 3px var(--color-success-soft);
+}
+.dot.degraded {
+  background: var(--color-warning);
+  box-shadow: 0 0 0 3px var(--color-warning-soft);
+}
+.dot.down {
+  background: var(--color-danger);
+  box-shadow: 0 0 0 3px var(--color-danger-soft);
+}
+
+/* Candidates' only sign of an outage: plain words, no infrastructure names. */
+.connection-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-6);
+  background: var(--color-warning-soft);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+}
+
+/* ---------- main content ---------- */
+
+.page {
+  flex: 1;
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-6) var(--space-16);
+}
+/* <main> takes focus on a route change so screen readers land on the new page. It is a
+   programmatic target, not a control, so it never draws base.css's focus ring. */
+.page:focus,
+.page:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+@media (forced-colors: active) {
+  .page:focus-visible {
+    outline: none !important;
+  }
+}
+.page-wide {
+  max-width: none;
+}
+
+/* ---------- mobile: sidebar becomes an off-canvas drawer ---------- */
+
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .app-shell,
+  .app-shell[data-sidebar="collapsed"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: var(--z-drawer);
+    width: min(var(--sidebar-width), 85vw);
+    box-shadow: var(--shadow-xl);
+    transform: translateX(-105%);
+    transition: transform var(--duration-slow) var(--ease-out);
+  }
+  .app-shell[data-mobile-nav="open"] .sidebar {
+    transform: none;
+  }
+  /* Collapsing is a desktop preference: the drawer always shows labels. */
+  .app-shell[data-sidebar="collapsed"] .sidebar :is(.nav-item-label, .nav-section-label, .brand-text) {
+    display: revert;
+  }
+  .app-shell[data-sidebar="collapsed"] .nav-item {
+    justify-content: flex-start;
+    padding: 0 var(--space-3);
+  }
+  .app-shell[data-sidebar="collapsed"] .sidebar-header {
+    justify-content: flex-start;
+    padding: 0 var(--space-3) 0 var(--space-4);
+  }
+  .app-shell[data-mobile-nav="open"] .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: calc(var(--z-drawer) - 1);
+    background: var(--color-overlay);
+    animation: fade-in var(--duration-base) var(--ease-out);
+  }
+  .topbar {
+    padding: 0 var(--space-4);
+  }
+  .connection-notice {
+    padding-inline: var(--space-4);
+  }
+  .topbar .topbar-mobile-only {
+    display: inline-grid;
+  }
+  .topbar .topbar-desktop-only {
+    display: none;
+  }
+  .page {
+    padding: var(--space-5) var(--space-4) var(--space-12);
+  }
+}
+
+@media (max-width: 600px) {
+  .search-trigger-label,
+  .search-trigger .kbd-combo {
+    display: none;
+  }
+  .search-trigger {
+    width: var(--control-md);
+    padding: 0;
+    justify-content: center;
+  }
+}
+
+/* ---------- page structure ---------- */
+
+.section {
+  margin-bottom: var(--space-8);
+}
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+/* ---------- grids ---------- */
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+.grid-sidebar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20rem;
+  gap: var(--space-5);
+  align-items: start;
+}
+.grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: var(--space-4);
+}
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+@media (max-width: 1100px) {
+  .grid-sidebar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 900px) {
+  .grid-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---------- flex utilities ---------- */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.stack-sm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.row-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.spacer {
+  margin-left: auto;
+}
+.button-row {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* ---------- forms ---------- */
+
+.form-grid {
+  display: grid;
+  gap: var(--space-4);
+}
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+@media (max-width: 600px) {
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+}
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+/* ---------- definition list ---------- */
+
+.detail-list {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-2) var(--space-5);
+  margin: 0;
+}
+.detail-list dt {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.detail-list dd {
+  margin: 0;
+  min-width: 0;
+}
+
+/* ---------- standalone screens (outside the shell: session errors, route errors) ---------- */
+
+.standalone-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  background:
+    radial-gradient(60rem 30rem at 15% -10%, var(--color-accent-soft), transparent 60%),
+    var(--color-bg);
+}
+.standalone-card {
+  width: 100%;
+  max-width: 26rem;
+  box-shadow: var(--shadow-lg);
+}
+
+/* ---------- text utilities ---------- */
+
+.muted {
+  color: var(--color-text-muted);
+}
+.subtle {
+  color: var(--color-text-subtle);
+}
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+.text-xs {
+  font-size: var(--text-xs);
+}
+.text-sm {
+  font-size: var(--text-sm);
+}
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.prewrap {
+  white-space: pre-wrap;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- keyframes shared by layout and components ---------- */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+@keyframes shimmer {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
