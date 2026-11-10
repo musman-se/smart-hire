@@ -1,13 +1,13 @@
 import type { CandidateRegistration } from "../../api/types";
 import { looksLikePhone } from "../../lib/phone";
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "./password";
-import { codePointLength, looksLikeEmail, type FieldErrors } from "./validation";
+import { FULL_NAME_LIMITS, codePointLength, looksLikeEmail, type FieldErrors } from "./validation";
 
 /** Mirrors CandidateBase in backend/app/candidates/schemas.py and
  * SKILL_NAME_MAX_LENGTH in backend/app/skills/schemas.py. */
 export const LIMITS = {
-  fullNameMin: 2,
-  fullNameMax: 160,
+  fullNameMin: FULL_NAME_LIMITS.min,
+  fullNameMax: FULL_NAME_LIMITS.max,
   headlineMax: 200,
   phoneMax: 32,
   yearsMax: 60,

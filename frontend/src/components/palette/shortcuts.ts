@@ -5,9 +5,10 @@
  */
 
 import type { Role } from "../../api/types";
+import { isStaff } from "../../auth/roles";
 import { GLOBAL_SHORTCUTS, NAV_ITEMS } from "../navigation";
 
-/** Recruiters: start a new job from anywhere. Bound by GlobalShortcuts. */
+/** The hiring team: start a new job from anywhere. Bound by GlobalShortcuts. */
 export const NEW_JOB_SHORTCUT = "n";
 
 /** A row is a bindable combo, drawn by <Shortcut>, or plain key caps for keys that
@@ -30,17 +31,20 @@ const PALETTE_KEYS: readonly ShortcutRow[] = [
 ];
 
 /** Bound by individual pages; listed so they are discoverable in one place. */
+const STAFF_PAGE_SHORTCUTS: readonly ShortcutRow[] = [
+  { label: "Focus the search box on a list", combo: "/" },
+  { label: "Save the job you are editing", combo: "mod+s" },
+];
+
 const PAGE_SHORTCUTS: Record<Role, readonly ShortcutRow[]> = {
-  recruiter: [
-    { label: "Focus the search box on a list", combo: "/" },
-    { label: "Save the job you are editing", combo: "mod+s" },
-  ],
+  recruiter: STAFF_PAGE_SHORTCUTS,
+  admin: STAFF_PAGE_SHORTCUTS,
   candidate: [{ label: "Save your profile", combo: "mod+s" }],
 };
 
 export function shortcutGroups(role: Role): ShortcutGroup[] {
   const actions: ShortcutRow[] =
-    role === "recruiter" ? [{ label: "Create a job", combo: NEW_JOB_SHORTCUT }] : [];
+    isStaff(role) ? [{ label: "Create a job", combo: NEW_JOB_SHORTCUT }] : [];
 
   return [
     { heading: "General", rows: GLOBAL_SHORTCUTS },

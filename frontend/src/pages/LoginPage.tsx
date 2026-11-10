@@ -25,6 +25,10 @@ const FIELD_ORDER: readonly SignInField[] = ["email", "password"];
 const isWrongCredentials = (error: unknown) =>
   error instanceof ApiError && error.code === "invalid_credentials";
 
+/** The password was right, but an admin has switched the account off. */
+const isDeactivated = (error: unknown) =>
+  error instanceof ApiError && error.code === "account_deactivated";
+
 export function LoginPage() {
   useDocumentTitle("Sign in");
   const { state, signIn } = useAuth();
@@ -134,6 +138,11 @@ export function LoginPage() {
           // (code and request id) that ErrorNotice adds for real failures.
           <Notice tone="error" title="Could not sign in">
             The email or password is incorrect.
+          </Notice>
+        ) : isDeactivated(error) ? (
+          // The password was right, so retyping it will not help: say who can.
+          <Notice tone="rule" title="This account has been deactivated">
+            Ask your admin to reactivate it. Until then it cannot sign in.
           </Notice>
         ) : (
           <ErrorNotice error={error} />

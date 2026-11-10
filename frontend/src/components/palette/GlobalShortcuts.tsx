@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { useUser } from "../../auth/AuthProvider";
+import { isStaff } from "../../auth/roles";
 import { useHotkeys, type Hotkey } from "../../hooks/useHotkeys";
 import { NEW_JOB_SHORTCUT } from "./shortcuts";
 
@@ -17,7 +18,7 @@ export function GlobalShortcuts() {
   const { pathname } = useLocation();
 
   const hotkeys = useMemo<Hotkey[]>(() => {
-    if (user.role !== "recruiter") return [];
+    if (!isStaff(user.role)) return [];
     return [
       {
         combo: NEW_JOB_SHORTCUT,

@@ -25,6 +25,14 @@ export type Role = Schemas["Role"];
 export type LoginRequest = Schemas["LoginRequest"];
 export type TokenPair = Schemas["TokenPair"];
 
+/** The hiring team, as the admin's team page lists it. */
+export type StaffMember = Schemas["StaffMemberRead"];
+export type StaffStatus = Schemas["StaffStatus"];
+export type RecruiterInvite = Schemas["RecruiterInvite"];
+export type RecruiterInvited = Schemas["RecruiterInvited"];
+export type InvitationIssued = Schemas["InvitationIssued"];
+export type InvitationPreview = Schemas["InvitationPreview"];
+
 export type Application = Schemas["ApplicationRead"];
 export type ApplicationCreate = Schemas["ApplicationCreate"];
 export type ApplicationStage = Schemas["ApplicationStage"];

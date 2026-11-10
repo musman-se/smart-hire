@@ -325,9 +325,12 @@ tradeoffs: [ARCHITECTURE.md §4.22–4.26](ARCHITECTURE.md#422-short-lived-jwts-
 | UC-A2 | Sign in | Candidate, recruiter | Access token + refresh token; a wrong password and an unknown email get the same `invalid_credentials` |
 | UC-A3 | Stay signed in | Candidate, recruiter | `/auth/refresh` exchanges a refresh token for a new pair; each works once |
 | UC-A4 | Sign out | Candidate, recruiter | The session's refresh token is deleted; signing out with an already-rotated one ends every session |
-| UC-A5 | Create a recruiter | Administrator | `python -m app.auth.cli create-recruiter <email> --name <name>`; account and profile together; never over HTTP |
+| UC-A5 | Create the first admin | Server operator | `python -m app.auth.cli create-admin <email> --name <name>`; account and profile together; never over HTTP |
 | UC-A6 | Delete my account | Candidate | Account, profile and applications removed; existing tokens stop working |
-| UC-A7 | Edit my recruiter profile | Recruiter | `PATCH /recruiters/me` changes name and title; email excluded; a candidate gets 403 |
+| UC-A7 | Edit my staff profile | Recruiter, admin | `PATCH /recruiters/me` changes name and title; email excluded; a candidate gets 403 |
+| UC-A8 | Add a recruiter | Admin | `POST /recruiters` creates the account with no password and returns a one-time invitation link (72 h); a taken email → `duplicate_email`; a recruiter or candidate gets 403 |
+| UC-A9 | Accept an invitation | Invited recruiter | `/invite#<token>` in the console; choosing a password signs them in; the link works once; an expired or used link → `invalid_invitation` |
+| UC-A10 | Deactivate or reactivate a team member | Admin | Deactivated: sign-in → `account_deactivated`, existing sessions end at once, profile kept; reactivated: old password works again; an admin cannot deactivate themself |
 
 ### 11.2 Requirements
 

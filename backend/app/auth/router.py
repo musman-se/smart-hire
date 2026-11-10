@@ -7,6 +7,13 @@ from /auth/me and /auth/change-password.
     POST /auth/logout     revoke a refresh token
     POST /auth/change-password   current + new password -> every session ends, a new pair
     GET  /auth/me         who the access token belongs to
+    POST /auth/invitations/preview   an invitation link's token -> whose invitation it is
+    POST /auth/invitations/accept    token + new password -> the account is ready, signed in
+
+The invitation endpoints are public: the person opening the link has no account they can
+sign in to yet. The token in the body is what proves the admin invited them. It travels
+in the body rather than the URL so it stays out of server and proxy logs, and the
+console's link carries it after a "#", which browsers never send to any server.
 
 Register has no Idempotency-Key. The idempotency record keeps a SHA-256 of the request
 body for a day, and this body holds a password: a fast, unsalted hash of it is exactly
@@ -19,6 +26,9 @@ from fastapi import APIRouter, status
 from app.auth import service as auth_service
 from app.auth.dependencies import CurrentUserDep
 from app.auth.schemas import (
+    InvitationAccept,
+    InvitationPreview,
+    InvitationToken,
     LoginRequest,
     PasswordChange,
     RefreshRequest,
@@ -43,7 +53,7 @@ _UNAUTHORIZED = {401: {"model": ErrorResponse}}
     description=(
         "Creates the account and the candidate profile together. It does not sign you "
         "in: call /auth/login next. Recruiter accounts are created by an administrator "
-        "(`python -m app.auth.cli create-recruiter`), never here."
+        "(an invitation link, or `python -m app.auth.cli`), never here."
     ),
     responses={409: {"model": ErrorResponse, "description": "The email already has an account"}},
 )
@@ -97,6 +107,36 @@ async def change_password(
     session: SessionDep, user: CurrentUserDep, payload: PasswordChange
 ) -> TokenPair:
     return await auth_service.change_password(session, user, payload)
+
+
+_INVALID_INVITATION = {
+    404: {"model": ErrorResponse, "description": "Unknown, expired or already used"}
+}
+
+
+@router.post(
+    "/invitations/preview",
+    response_model=InvitationPreview,
+    summary="Look at an invitation",
+    description="Whose invitation a link holds, so the page can greet them by name.",
+    responses=_INVALID_INVITATION,
+)
+async def preview_invitation(session: SessionDep, payload: InvitationToken) -> InvitationPreview:
+    return await auth_service.preview_invitation(session, payload.token)
+
+
+@router.post(
+    "/invitations/accept",
+    response_model=TokenPair,
+    summary="Accept an invitation",
+    description=(
+        "Sets the invited recruiter's password and signs them in: the pair returned is a "
+        "normal session. The link stops working."
+    ),
+    responses=_INVALID_INVITATION,
+)
+async def accept_invitation(session: SessionDep, payload: InvitationAccept) -> TokenPair:
+    return await auth_service.accept_invitation(session, payload)
 
 
 @router.get("/me", response_model=UserRead, summary="The signed-in user", responses=_UNAUTHORIZED)

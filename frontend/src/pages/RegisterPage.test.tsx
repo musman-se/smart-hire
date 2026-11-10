@@ -31,9 +31,14 @@ describe("RegisterPage", () => {
       </ThemeProvider>,
     );
 
-    await user.type(screen.getByRole("textbox", { name: /Full name/ }), "Qa Alpha");
-    await user.type(screen.getByRole("textbox", { name: /Email/ }), "qa.alpha@example.com");
-    await user.type(screen.getByLabelText(/^Password/), "QaPassw0rd!2026");
+    // Filled by paste: typing ~45 characters key by key ran past the 5 s test timeout when
+    // the machine was busy. What this test checks starts after the form is filled.
+    await user.click(screen.getByRole("textbox", { name: /Full name/ }));
+    await user.paste("Qa Alpha");
+    await user.click(screen.getByRole("textbox", { name: /Email/ }));
+    await user.paste("qa.alpha@example.com");
+    await user.click(screen.getByLabelText(/^Password/));
+    await user.paste("QaPassw0rd!2026");
     await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(await screen.findByRole("button", { name: "Create account" }));
 

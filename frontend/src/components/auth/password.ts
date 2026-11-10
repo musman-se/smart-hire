@@ -118,15 +118,51 @@ export const PASSWORD_CHANGE_ORDER: readonly PasswordChangeField[] = ["current",
 export function validatePasswordChange(
   values: Record<PasswordChangeField, string>,
 ): FieldErrors<PasswordChangeField> {
+  const chosen = checkChosenPassword(values.next, values.confirm, {
+    choose: "Choose a new password",
+    again: "Enter the new password again",
+  });
   const errors: FieldErrors<PasswordChangeField> = {};
-  const length = codePointLength(values.next);
   if (!values.current) errors.current = "Enter your current password";
-  if (!values.next) errors.next = "Choose a new password";
-  else if (length < PASSWORD_MIN_LENGTH || length > PASSWORD_MAX_LENGTH)
-    errors.next = `Use ${PASSWORD_MIN_LENGTH} to ${PASSWORD_MAX_LENGTH} characters`;
+  if (chosen.password) errors.next = chosen.password;
   else if (values.next === values.current) errors.next = "Choose a password you are not using now";
-  if (!values.confirm) errors.confirm = "Enter the new password again";
-  else if (values.confirm !== values.next) errors.confirm = "The passwords do not match";
+  if (chosen.confirm) errors.confirm = chosen.confirm;
+  return errors;
+}
+
+export type NewPasswordField = "password" | "confirm";
+export const NEW_PASSWORD_ORDER: readonly NewPasswordField[] = ["password", "confirm"];
+
+/**
+ * A first password, chosen through an invitation: registration's length rule, plus
+ * the confirmation, since nobody can sign in to reset a typo'd one.
+ */
+export function validateNewPassword(
+  values: Record<NewPasswordField, string>,
+): FieldErrors<NewPasswordField> {
+  return checkChosenPassword(values.password, values.confirm, {
+    choose: "Choose a password",
+    again: "Enter the password again",
+  });
+}
+
+/**
+ * The rules for any password someone chooses, with its confirmation: the length range
+ * the API enforces, and a match, against a typo nobody could sign in with. Shared by the
+ * change-password and invitation forms; the prompts are theirs, as their fields differ.
+ */
+function checkChosenPassword(
+  password: string,
+  confirm: string,
+  prompts: { choose: string; again: string },
+): FieldErrors<NewPasswordField> {
+  const errors: FieldErrors<NewPasswordField> = {};
+  const length = codePointLength(password);
+  if (!password) errors.password = prompts.choose;
+  else if (length < PASSWORD_MIN_LENGTH || length > PASSWORD_MAX_LENGTH)
+    errors.password = `Use ${PASSWORD_MIN_LENGTH} to ${PASSWORD_MAX_LENGTH} characters`;
+  if (!confirm) errors.confirm = prompts.again;
+  else if (confirm !== password) errors.confirm = "The passwords do not match";
   return errors;
 }
 

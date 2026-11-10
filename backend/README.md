@@ -87,7 +87,7 @@ paste the access token into **Authorize**).
 ### Authentication
 
 Every endpoint needs `Authorization: Bearer <access token>` except the first four of
-these, and the health probes:
+these, the two invitation endpoints, and the health probes:
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -97,16 +97,21 @@ these, and the health probes:
 | POST | `/auth/logout` | End the session: its refresh token is deleted |
 | GET | `/auth/me` | The signed-in user (requires a token) |
 | POST | `/auth/change-password` | Current + new password (requires a token). Ends every session and returns a new pair for the caller |
+| POST | `/auth/invitations/preview` | An invitation token → whose invitation it is (name, email, expiry) |
+| POST | `/auth/invitations/accept` | Token + new password → the invited recruiter's password is set, and they are signed in |
 
-Recruiters are not created over HTTP. The command creates the account and the
-recruiter's profile together, and prompts for the password:
+Nobody signs up as staff over HTTP. Each installation creates its first admin from the
+command line, which creates the account and profile together and prompts for the
+password; after that, admins invite recruiters (`POST /recruiters`). `create-recruiter`
+does the same for a recruiter, for scripts:
 
 ```bash
+docker compose exec api python -m app.auth.cli create-admin owner@example.com --name "Nadia Malik"
 docker compose exec api python -m app.auth.cli create-recruiter alice@example.com --name "Alice Ahmed"
 ```
 
 **Roles.** A recruiter manages jobs, publishing and the hiring pipeline, and reads every
-candidate and application. A candidate reads published jobs, applies as themselves, and
+candidate and application. An admin does all of that and manages the hiring team. A candidate reads published jobs, applies as themselves, and
 reads, edits and withdraws only their own profile and applications — without the match
 score or the recruiter's stage notes. A closed job stays readable to the candidates who
 applied to it. Another user's profile or application, or a job a candidate could never
@@ -144,10 +149,15 @@ A candidate's id is their account's id, so `/auth/me` gives it. Registering is
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/recruiters/me` | Your recruiter profile: name, title, email |
+| GET | `/recruiters/me` | Your profile (recruiter or admin): name, title, email |
 | PATCH | `/recruiters/me` | Update your name or title (email excluded) |
+| GET | `/recruiters` | Admin: the whole hiring team, with each person's status (active, invited, deactivated) |
+| POST | `/recruiters` | Admin: add a recruiter (email, name, title). Returns an invitation token, shown once |
+| POST | `/recruiters/{recruiter_id}/invitation` | Admin: a new link for someone who has not set a password; the old one stops working |
+| POST | `/recruiters/{recruiter_id}/deactivate` | Admin: they can no longer sign in, and every session ends at once |
+| POST | `/recruiters/{recruiter_id}/reactivate` | Admin: they sign in with their old password again |
 
-A recruiter's profile is created with their account, by the CLI above.
+A staff profile is created with its account: by an admin's invitation, or by the CLI.
 
 ### Applications
 

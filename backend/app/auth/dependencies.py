@@ -1,8 +1,11 @@
 """Who is calling — FastAPI dependencies that every protected route builds on.
 
     CurrentUserDep   any signed-in user                      401 without a valid token
-    RecruiterDep     a recruiter                             403 for a candidate
-    CandidateDep     a candidate (their id is their profile) 403 for a recruiter
+    RecruiterDep     a recruiter or an admin                 403 for a candidate
+    AdminDep         an admin                                403 for anyone else
+    CandidateDep     a candidate (their id is their profile) 403 for a recruiter or admin
+
+An admin passes every recruiter check: admins run the hiring team and hire as well.
 
 **Secure by default.** app/main.py mounts every domain router with get_current_user as a
 router-level dependency, so a new endpoint is protected without anyone remembering to
@@ -19,7 +22,7 @@ from typing import Annotated
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.auth.enums import Role
+from app.auth.enums import STAFF_ROLES, Role
 from app.auth.errors import InvalidTokenError, NotAuthenticatedError, RoleRequiredError
 from app.auth.models import User
 from app.auth.security import read_access_token
@@ -46,7 +49,9 @@ async def get_current_user(
     # One primary-key lookup per request. It is what lets a deleted account stop
     # working immediately, instead of when its last token expires.
     user = await session.get(User, user_id)
-    if user is None:
+    # A deactivated account's access tokens stop here, at once, rather than when they
+    # expire.
+    if user is None or not user.is_active:
         raise InvalidTokenError()
     return user
 
@@ -55,8 +60,14 @@ CurrentUserDep = Annotated[User, Depends(get_current_user)]
 
 
 async def require_recruiter(user: CurrentUserDep) -> User:
-    if user.role is not Role.RECRUITER:
+    if user.role not in STAFF_ROLES:
         raise RoleRequiredError(Role.RECRUITER)
+    return user
+
+
+async def require_admin(user: CurrentUserDep) -> User:
+    if user.role is not Role.ADMIN:
+        raise RoleRequiredError(Role.ADMIN)
     return user
 
 
@@ -67,4 +78,5 @@ async def require_candidate(user: CurrentUserDep) -> User:
 
 
 RecruiterDep = Annotated[User, Depends(require_recruiter)]
+AdminDep = Annotated[User, Depends(require_admin)]
 CandidateDep = Annotated[User, Depends(require_candidate)]

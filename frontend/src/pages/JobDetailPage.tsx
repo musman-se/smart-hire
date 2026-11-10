@@ -2,6 +2,7 @@ import { useParams } from "react-router-dom";
 
 import { ApiError } from "../api/client";
 import { useUser } from "../auth/AuthProvider";
+import { isStaff } from "../auth/roles";
 import { CandidateJobView } from "../components/job-detail/CandidateJobView";
 import { RecruiterJobView } from "../components/job-detail/RecruiterJobView";
 import {
@@ -50,7 +51,7 @@ export function JobDetailPage() {
           You're seeing what was last loaded.
         </Notice>
       )}
-      {user.role === "recruiter" ? (
+      {isStaff(user.role) ? (
         <RecruiterJobView job={job} />
       ) : (
         <CandidateJobView job={job} candidateId={user.id} />

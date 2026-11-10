@@ -17,7 +17,7 @@ from pwdlib.hashers.argon2 import Argon2Hasher
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.auth.cli import create_recruiter
+from app.auth.cli import create_staff
 from app.auth.enums import Role
 from app.auth.models import RefreshToken, User
 from app.auth.security import create_access_token
@@ -465,7 +465,7 @@ async def test_the_new_password_is_stored_as_an_argon2id_hash(
 
 async def test_a_recruiter_can_change_their_password_too(engine, anonymous: AsyncClient) -> None:
     sessions = async_sessionmaker(engine, expire_on_commit=False)
-    await create_recruiter(
+    await create_staff(
         sessions, "hr-change@example.com", TEST_PASSWORD, "Hina Raza", exist_ok=False
     )
     tokens = (await sign_in(anonymous, "hr-change@example.com")).json()
@@ -485,6 +485,10 @@ PUBLIC_ROUTES = {
     ("POST", "/auth/login"),
     ("POST", "/auth/refresh"),
     ("POST", "/auth/logout"),
+    # The person opening an invitation link has no account they can sign in to yet; the
+    # token in the body is their proof.
+    ("POST", "/auth/invitations/preview"),
+    ("POST", "/auth/invitations/accept"),
 }
 
 
@@ -517,7 +521,7 @@ async def test_every_other_route_requires_a_token(
     """Fails for any new endpoint that answers without a token, unless it is added to
     PUBLIC_ROUTES on purpose."""
     url = path
-    for name in ("job_id", "candidate_id", "application_id"):
+    for name in ("job_id", "candidate_id", "application_id", "recruiter_id"):
         url = url.replace("{" + name + "}", str(uuid.uuid4()))
 
     response = await anonymous.request(method, url, json={})
@@ -689,10 +693,10 @@ async def test_a_recruiter_cannot_apply_or_withdraw(client: AsyncClient) -> None
 async def test_the_cli_creates_a_recruiter_who_can_sign_in(engine, anonymous: AsyncClient) -> None:
     sessions = async_sessionmaker(engine, expire_on_commit=False)
 
-    created = await create_recruiter(
+    created = await create_staff(
         sessions, "  Lead@Example.com", TEST_PASSWORD, "  Zara Malik ", exist_ok=False
     )
-    repeated = await create_recruiter(
+    repeated = await create_staff(
         sessions, "lead@example.com", "ignored-pw", "Ignored Name", exist_ok=True
     )
 
@@ -725,4 +729,4 @@ async def test_the_cli_refuses(
     sessions = async_sessionmaker(engine, expire_on_commit=False)
 
     with pytest.raises(SystemExit, match=re.escape(message)):
-        await create_recruiter(sessions, email, password, name, exist_ok=True)
+        await create_staff(sessions, email, password, name, exist_ok=True)

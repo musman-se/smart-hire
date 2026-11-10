@@ -2,10 +2,14 @@
 
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import AfterValidator, BaseModel, EmailStr, Field, StringConstraints, field_validator
 
-from app.core.schemas import PatchModel, ReadModel
+from app.auth.enums import Role
+from app.auth.schemas import normalise_email
+from app.core.schemas import InputModel, PatchModel, ReadModel
+from app.recruiters.enums import StaffStatus
 from app.recruiters.models import FULL_NAME_MAX_LENGTH, TITLE_MAX_LENGTH
 
 FULL_NAME_MIN_LENGTH = 2
@@ -22,25 +26,50 @@ def normalise_full_name(value: str) -> str:
     return value
 
 
+# One rule for a name wherever it is typed, the API or the command line:
+# normalise_full_name trims *before* checking the length, so surrounding spaces never
+# count against the limit. The bounds are repeated for the OpenAPI schema only.
+FullName = Annotated[
+    str,
+    AfterValidator(normalise_full_name),
+    Field(json_schema_extra={"minLength": FULL_NAME_MIN_LENGTH, "maxLength": FULL_NAME_MAX_LENGTH}),
+]
+
+
+def _blank_is_none(value: str) -> str | None:
+    # An emptied title field means "no title", not a title of "". Already trimmed.
+    return value or None
+
+
+Title = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, max_length=TITLE_MAX_LENGTH),
+    AfterValidator(_blank_is_none),
+]
+
+
 class RecruiterUpdate(PatchModel):
     not_nullable = frozenset({"full_name"})
 
-    full_name: str | None = Field(default=None, max_length=FULL_NAME_MAX_LENGTH)
-    title: str | None = Field(default=None, max_length=TITLE_MAX_LENGTH)
+    full_name: FullName | None = None
+    title: Title | None = None
 
     # email is absent for the same reason as on CandidateUpdate: it is the account's
     # identity, and changing it belongs behind a verification flow.
 
-    @field_validator("full_name")
-    @classmethod
-    def check_full_name(cls, value: str | None) -> str | None:
-        return None if value is None else normalise_full_name(value)
 
-    @field_validator("title")
+class RecruiterInvite(InputModel):
+    """An admin adding a recruiter (POST /recruiters). No password: the recruiter chooses
+    one through the invitation link."""
+
+    email: EmailStr
+    full_name: FullName
+    title: Title | None = None
+
+    @field_validator("email")
     @classmethod
-    def blank_title_is_none(cls, value: str | None) -> str | None:
-        # An emptied title field means "no title", not a title of "".
-        return (value.strip() or None) if value is not None else None
+    def normalise_email(cls, value: str) -> str:
+        return normalise_email(value)
 
 
 class RecruiterRead(ReadModel):
@@ -50,3 +79,28 @@ class RecruiterRead(ReadModel):
     title: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class StaffMemberRead(RecruiterRead):
+    """One row of the admin's team page."""
+
+    role: Role = Field(description="recruiter or admin")
+    status: StaffStatus = Field(
+        description="active; invited (has not set a password yet); or deactivated"
+    )
+    deactivated_at: datetime | None
+    invitation_expires_at: datetime | None = Field(
+        default=None, description="When the current invitation link stops working, if any"
+    )
+
+
+class InvitationIssued(BaseModel):
+    """Shown once. The console turns the token into a link; the server keeps only a hash."""
+
+    token: str
+    expires_at: datetime
+
+
+class RecruiterInvited(BaseModel):
+    member: StaffMemberRead
+    invitation: InvitationIssued

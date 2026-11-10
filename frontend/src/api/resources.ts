@@ -8,6 +8,8 @@ import type {
   Candidate,
   CandidateRegistration,
   CandidateUpdate,
+  InvitationIssued,
+  InvitationPreview,
   Job,
   JobContent,
   JobCreate,
@@ -16,7 +18,10 @@ import type {
   Notification,
   Page,
   Publication,
+  RecruiterInvite,
+  RecruiterInvited,
   Skill,
+  StaffMember,
   StageChange,
   TokenPair,
   User,
@@ -38,7 +43,8 @@ export interface CandidateFilters {
   offset?: number;
 }
 
-/** Register, login and logout send no access token: they are how one is obtained. */
+/** Register, login, logout and the invitation pair send no access token: they are how
+ * one is obtained. */
 export const authApi = {
   register: (payload: CandidateRegistration) =>
     api.post<Candidate>("/auth/register", payload, { anonymous: true }),
@@ -47,6 +53,13 @@ export const authApi = {
   logout: (refreshToken: string) =>
     api.post<void>("/auth/logout", { refresh_token: refreshToken }, { anonymous: true }),
   me: () => api.get<User>("/auth/me"),
+  /** Who an invitation link is for. The token goes in the body, never the URL, so it
+   * stays out of server and proxy logs. */
+  previewInvitation: (token: string) =>
+    api.post<InvitationPreview>("/auth/invitations/preview", { token }, { anonymous: true }),
+  /** Sets the invited recruiter's password; the pair returned signs them in. */
+  acceptInvitation: (token: string, password: string) =>
+    api.post<TokenPair>("/auth/invitations/accept", { token, password }, { anonymous: true }),
   /** Ends every session, this one included; the pair returned replaces it. */
   changePassword: (currentPassword: string, newPassword: string) =>
     api.post<TokenPair>("/auth/change-password", {
@@ -68,6 +81,18 @@ export const jobsApi = {
   content: (id: string) => api.get<JobContent>(`/jobs/${id}/content`),
   close: (id: string) => api.post<Job>(`/jobs/${id}/close`),
   reopen: (id: string) => api.post<Job>(`/jobs/${id}/reopen`),
+};
+
+/** The hiring team. Admins only: the API answers anyone else with 403 `forbidden`. */
+export const teamApi = {
+  list: (filters: { limit?: number; offset?: number } = {}) =>
+    api.get<Page<StaffMember>>(`/recruiters${toQuery({ ...filters })}`),
+  /** No password: the answer carries a one-time invitation token instead. */
+  invite: (payload: RecruiterInvite) => api.post<RecruiterInvited>("/recruiters", payload),
+  /** A fresh link for someone still invited. Any earlier link stops working. */
+  reissueInvitation: (id: string) => api.post<InvitationIssued>(`/recruiters/${id}/invitation`),
+  deactivate: (id: string) => api.post<StaffMember>(`/recruiters/${id}/deactivate`),
+  reactivate: (id: string) => api.post<StaffMember>(`/recruiters/${id}/reactivate`),
 };
 
 export const candidatesApi = {

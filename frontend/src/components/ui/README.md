@@ -46,7 +46,7 @@ New query hooks go in **your own file** (e.g. `src/hooks/pipeline.ts`), built on
 
 | Page CSS file | Intended for |
 |---|---|
-| `styles/pages/auth.css` | LoginPage, RegisterPage |
+| `styles/pages/auth.css` | LoginPage, RegisterPage, InvitePage |
 | `styles/pages/dashboard.css` | recruiter/DashboardPage, recruiter/ApplicationsPage |
 | `styles/pages/jobs.css` | JobsPage, recruiter/JobEditorPage |
 | `styles/pages/job-detail.css` | JobDetailPage |
@@ -54,6 +54,7 @@ New query hooks go in **your own file** (e.g. `src/hooks/pipeline.ts`), built on
 | `styles/pages/candidate.css` | candidate/HomePage, candidate/MyApplicationsPage, ProfilePage |
 | `styles/pages/candidates.css` | CandidatesPage, CandidateDetailPage |
 | `styles/pages/palette.css` | CommandPalette, ShortcutsDialog |
+| `styles/pages/team.css` | admin/TeamPage and its dialogs (`components/team/`) |
 
 ### Tokens (summary)
 

@@ -10,7 +10,7 @@ import {
 
 import { ApiError, refreshInFlight, refreshSession } from "../api/client";
 import { authApi } from "../api/resources";
-import type { User } from "../api/types";
+import type { TokenPair, User } from "../api/types";
 import { session } from "./session";
 
 /**
@@ -30,6 +30,9 @@ interface AuthContextValue {
   /** From "unavailable": try restoring the session again. */
   retry: () => void;
   signIn: (email: string, password: string) => Promise<void>;
+  /** Sign in with a pair some other endpoint handed out — accepting an invitation
+   * answers with one, so the new recruiter does not type their password twice. */
+  adoptSession: (tokens: TokenPair) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -103,9 +106,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [queryClient],
   );
 
-  const signIn = useCallback(
-    async (email: string, password: string) => {
-      session.store(await authApi.login(email, password));
+  const adoptSession = useCallback(
+    async (tokens: TokenPair) => {
+      session.store(tokens);
       let user: User;
       try {
         user = await authApi.me();
@@ -117,6 +120,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setState({ status: "signed-in", user });
     },
     [queryClient],
+  );
+
+  const signIn = useCallback(
+    async (email: string, password: string) => adoptSession(await authApi.login(email, password)),
+    [adoptSession],
   );
 
   const signOut = useCallback(async () => {
@@ -136,7 +144,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [queryClient]);
 
   return (
-    <AuthContext.Provider value={{ state, retry, signIn, signOut }}>
+    <AuthContext.Provider value={{ state, retry, signIn, adoptSession, signOut }}>
       {children}
     </AuthContext.Provider>
   );

@@ -8,16 +8,17 @@ const combos = (rows: readonly ShortcutRow[]) =>
 
 describe("shortcutGroups", () => {
   it("lists every navigation shortcut for the role", () => {
-    for (const role of ["recruiter", "candidate"] as const) {
+    for (const role of ["recruiter", "admin", "candidate"] as const) {
       const goTo = shortcutGroups(role).find((group) => group.heading === "Go to");
       expect(combos(goTo?.rows ?? [])).toEqual(NAV_ITEMS[role].map((item) => item.shortcut));
     }
   });
 
-  it("offers the new-job shortcut to recruiters only", () => {
-    const all = (role: "recruiter" | "candidate") =>
+  it("offers the new-job shortcut to the hiring team only", () => {
+    const all = (role: "recruiter" | "admin" | "candidate") =>
       shortcutGroups(role).flatMap((group) => combos(group.rows));
     expect(all("recruiter")).toContain(NEW_JOB_SHORTCUT);
+    expect(all("admin")).toContain(NEW_JOB_SHORTCUT);
     expect(all("candidate")).not.toContain(NEW_JOB_SHORTCUT);
   });
 
@@ -27,7 +28,7 @@ describe("shortcutGroups", () => {
   });
 
   it("never binds one global combo to two things", () => {
-    for (const role of ["recruiter", "candidate"] as const) {
+    for (const role of ["recruiter", "admin", "candidate"] as const) {
       const bound = shortcutGroups(role)
         .filter((group) => group.heading !== "On pages")
         .flatMap((group) => combos(group.rows));

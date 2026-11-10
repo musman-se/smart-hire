@@ -183,10 +183,11 @@ services:
 
   # Demo data, on demand: `docker compose run --rm seed`. The "tools" profile keeps it
   # out of a plain `docker compose up`.
-  # Two steps. First the recruiter account, through the CLI — recruiters cannot sign
-  # up over HTTP, so the first one can only be made here; --exist-ok makes a re-run
-  # harmless. Then seed.py, which goes through the HTTP API like any client: it signs
-  # in as that recruiter, and registers and applies as each candidate.
+  # Two steps. First the staff accounts, through the CLI: an admin (the first admin can
+  # only be made here; the console's Team page invites everyone after that) and a
+  # recruiter, so both views can be tried. --exist-ok makes a re-run harmless. Then
+  # seed.py, which goes through the HTTP API like any client: it signs in as the
+  # recruiter, and registers and applies as each candidate.
   # The backend image, because the first step needs the backend code and database.
   seed:
     <<: *backend
@@ -198,6 +199,9 @@ services:
       - |
         set -e
         : "$${SEED_PASSWORD:?is not set - add it to .env, see .env.example}"
+        printf %s "$$SEED_PASSWORD" |
+          python -m app.auth.cli create-admin "$${SEED_ADMIN_EMAIL:-admin@example.com}" \
+            --name "$${SEED_ADMIN_NAME:-Nadia Malik}" --password-stdin --exist-ok
         email="$${SEED_RECRUITER_EMAIL:-recruiter@example.com}"
         name="$${SEED_RECRUITER_NAME:-Sara Ahmed}"
         printf %s "$$SEED_PASSWORD" |

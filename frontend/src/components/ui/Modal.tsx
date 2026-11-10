@@ -17,10 +17,18 @@ export interface ModalProps {
   children?: ReactNode;
   /** Close on a click outside the dialog. Default true; turn off for long forms. */
   closeOnBackdrop?: boolean;
+  /**
+   * Whether Escape, the header's X and a click outside may close it. Default true.
+   * False leaves only the dialog's own buttons — for something that must not be lost to
+   * a stray key, like a link shown once or a form with unsaved input.
+   */
+  dismissible?: boolean;
   /** Focused on open instead of the first focusable element. */
   initialFocus?: RefObject<HTMLElement | null>;
   className?: string;
 }
+
+const ignore = () => {};
 
 /**
  * A dialog over the page: rendered into <body>, labelled by its title, focus trapped
@@ -35,13 +43,16 @@ export function Modal({
   footer,
   children,
   closeOnBackdrop = true,
+  dismissible = true,
   initialFocus,
   className,
 }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const descriptionId = useId();
-  useOverlay(dialogRef, { open, onClose, initialFocus });
+  // Escape still reaches the overlay stack, so an inner control or this dialog keeps
+  // the key from the page behind; it just does nothing here.
+  useOverlay(dialogRef, { open, onClose: dismissible ? onClose : ignore, initialFocus });
 
   if (!open) return null;
 
@@ -50,7 +61,7 @@ export function Modal({
       className="modal-backdrop"
       // mousedown, not click: a text selection dragged out of the dialog must not close it.
       onMouseDown={(event) => {
-        if (closeOnBackdrop && event.target === event.currentTarget) onClose();
+        if (dismissible && closeOnBackdrop && event.target === event.currentTarget) onClose();
       }}
     >
       <div
@@ -73,7 +84,7 @@ export function Modal({
               </p>
             )}
           </div>
-          <IconButton icon="x" size="sm" aria-label="Close" onClick={onClose} />
+          {dismissible && <IconButton icon="x" size="sm" aria-label="Close" onClick={onClose} />}
         </div>
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-footer">{footer}</div>}

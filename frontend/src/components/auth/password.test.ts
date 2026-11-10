@@ -5,6 +5,7 @@ import {
   PASSWORD_MIN_LENGTH,
   passwordChecks,
   passwordStrength,
+  validateNewPassword,
   validatePasswordChange,
 } from "./password";
 
@@ -108,6 +109,23 @@ describe("validatePasswordChange", () => {
 
   it("refuses a confirmation that does not match", () => {
     expect(validatePasswordChange({ ...valid, confirm: "a-new-passphrasf" }).confirm).toBe(
+      "The passwords do not match",
+    );
+  });
+});
+
+describe("validateNewPassword", () => {
+  it("accepts a long enough, matching pair", () => {
+    expect(validateNewPassword({ password: "a-new-passphrase", confirm: "a-new-passphrase" })).toEqual({});
+  });
+
+  it("asks for both, then for the length rule and a match", () => {
+    expect(validateNewPassword({ password: "", confirm: "" })).toEqual({
+      password: "Choose a password",
+      confirm: "Enter the password again",
+    });
+    expect(validateNewPassword({ password: "short", confirm: "short" }).password).toMatch(/8 to 128/);
+    expect(validateNewPassword({ password: "a-new-passphrase", confirm: "a-new-passphrasf" }).confirm).toBe(
       "The passwords do not match",
     );
   });

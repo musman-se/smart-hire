@@ -30,6 +30,7 @@ from temporalio.client import Client
 from app.applications.processor import get_application_processor
 from app.auth import security
 from app.auth import service as auth_service
+from app.auth.enums import Role
 from app.auth.models import User
 from app.auth.security import create_access_token
 from app.core.config import settings
@@ -183,8 +184,17 @@ async def redis_available(test_redis: Redis) -> None:
 async def recruiter(engine) -> User:
     """A recruiter account, created the way the CLI creates one."""
     async with async_sessionmaker(engine, expire_on_commit=False)() as db_session:
-        return await auth_service.create_recruiter(
+        return await auth_service.create_staff_account(
             db_session, "recruiter@example.com", TEST_PASSWORD, "Sara Ahmed"
+        )
+
+
+@pytest_asyncio.fixture
+async def admin(engine) -> User:
+    """An admin account, created the way `create-admin` creates one."""
+    async with async_sessionmaker(engine, expire_on_commit=False)() as db_session:
+        return await auth_service.create_staff_account(
+            db_session, "admin@example.com", TEST_PASSWORD, "Nadia Malik", role=Role.ADMIN
         )
 
 

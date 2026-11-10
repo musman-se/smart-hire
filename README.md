@@ -22,9 +22,10 @@ docker compose up --build
 docker compose run --rm seed  # a recruiter, demo data, deliberate rule violations
 ```
 
-Sign in at http://localhost:3000 as `recruiter@example.com`, or as any seeded candidate
-(e.g. `ayesha.khan@example.com`), with `SEED_PASSWORD` from `.env`. Candidates can also
-create their own account at `/register`.
+Sign in at http://localhost:3000 as `admin@example.com` (who also sees the **Team**
+page), `recruiter@example.com`, or any seeded candidate (e.g. `ayesha.khan@example.com`),
+with `SEED_PASSWORD` from `.env`. Candidates can also create their own account at
+`/register`.
 
 > **Upgrading a stack from before authentication?** Add `JWT_SECRET_KEY`,
 > `SEED_RECRUITER_EMAIL` and `SEED_PASSWORD` to your `.env` (see `.env.example`) — the
@@ -121,15 +122,22 @@ Tests needing Temporal or Redis skip with a clear message when those are not run
 
 ## Authentication
 
-Every endpoint except the health probes and `/auth/register|login|refresh|logout` needs a
-signed-in user, declared once for every router rather than route by route. Recruiters
-run the hiring side; candidates see published jobs and only their own profile and
-applications. Short-lived JWT access tokens, refresh tokens that rotate on every use,
-Argon2id password hashes. Recruiter accounts are created from the command line:
+Every endpoint except the health probes, `/auth/register|login|refresh|logout` and the
+invitation links needs a signed-in user, declared once for every router rather than
+route by route. Recruiters run the hiring side; admins do too, and also manage the
+hiring team; candidates see published jobs and only their own profile and applications.
+Short-lived JWT access tokens, refresh tokens that rotate on every use, Argon2id
+password hashes.
+
+Each installation creates its first admin from the command line:
 
 ```bash
-docker compose exec api python -m app.auth.cli create-recruiter alice@example.com --name "Alice Ahmed"
+docker compose exec api python -m app.auth.cli create-admin owner@example.com --name "Nadia Malik"
 ```
 
-Design and tradeoffs: [docs/ARCHITECTURE.md §4.22–4.26](docs/ARCHITECTURE.md#422-short-lived-jwts-and-refresh-tokens-that-rotate).
+After that the admin adds recruiters on the console's **Team** page. Each one gets an
+invitation link, opens it, and chooses their own password. The demo seed creates
+`admin@example.com` and `recruiter@example.com`, both with `SEED_PASSWORD`.
+
+Design and tradeoffs: [docs/ARCHITECTURE.md §4.22–4.28](docs/ARCHITECTURE.md#422-short-lived-jwts-and-refresh-tokens-that-rotate).
 Remaining gaps (password reset, rate limiting): [§5](docs/ARCHITECTURE.md#5-gaps).
