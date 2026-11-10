@@ -8,7 +8,7 @@ import { FunnelCard } from "../../components/dashboard/FunnelCard";
 import { GettingStarted } from "../../components/dashboard/GettingStarted";
 import { TopJobsCard } from "../../components/dashboard/TopJobsCard";
 import { TrendCard } from "../../components/dashboard/TrendCard";
-import { greetingName } from "../../components/dashboard/greeting";
+import { greetingFor } from "../../components/dashboard/greeting";
 import {
   Badge,
   Button,
@@ -24,17 +24,18 @@ import {
 } from "../../components/ui";
 import { useDashboardData, type DashboardData } from "../../hooks/useDashboardData";
 import { useDocumentTitle } from "../../hooks/useDocumentTitle";
-import { useJobsByIds } from "../../hooks/queries";
+import { useJobsByIds, useRecruiterProfile } from "../../hooks/queries";
 
 /** The recruiter's landing page (/dashboard): what is happening, and what needs a hand. */
 export function DashboardPage() {
   useDocumentTitle("Dashboard");
   const user = useUser();
   const data = useDashboardData();
+  const profile = useRecruiterProfile();
   const [refreshing, setRefreshing] = useState(false);
 
   const now = new Date(data.now);
-  const name = greetingName(user.email);
+  const name = greetingFor(user.email, profile.data?.full_name);
   const title = name ? `${greeting(now.getHours())}, ${name}` : greeting(now.getHours());
   const today = now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
 

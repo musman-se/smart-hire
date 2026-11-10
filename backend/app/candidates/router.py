@@ -17,6 +17,7 @@ from app.candidates.errors import CandidateNotFoundError
 from app.candidates.schemas import CandidateRead, CandidateUpdate
 from app.core.db import SessionDep
 from app.core.pagination import Page, PaginationDep
+from app.core.schemas import QueryText
 
 router = APIRouter()
 
@@ -37,9 +38,19 @@ def _check_own(user_id: uuid.UUID, candidate_id: uuid.UUID) -> None:
 async def list_candidates(
     session: SessionDep,
     pagination: PaginationDep,
-    skill: Annotated[str | None, Query(description="Match one skill")] = None,
-    search: Annotated[str | None, Query(description="Case-insensitive name match")] = None,
+    skill: Annotated[QueryText | None, Query(description="Match one skill")] = None,
+    search: Annotated[QueryText | None, Query(description="Case-insensitive name match")] = None,
     min_experience: Annotated[int | None, Query(ge=0)] = None,
+    ids: Annotated[
+        list[uuid.UUID] | None,
+        Query(
+            max_length=100,
+            description=(
+                "Only these candidates, e.g. the applicants on one page — one request "
+                "instead of one per candidate. Repeat the parameter for each id."
+            ),
+        ),
+    ] = None,
 ) -> Page[CandidateRead]:
     candidates, total = await candidate_service.list_candidates(
         session,
@@ -48,6 +59,7 @@ async def list_candidates(
         skill=skill,
         search=search,
         min_experience=min_experience,
+        ids=ids,
     )
     return Page[CandidateRead].of(candidates, total, pagination)
 

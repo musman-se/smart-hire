@@ -9,7 +9,7 @@ too; they are checked here first so a client gets a 422 rather than a 500.
 import uuid
 from datetime import datetime
 
-from pydantic import Field, field_validator
+from pydantic import Field
 
 from app.core.schemas import InputModel, PatchModel, ReadModel
 from app.jobs.enums import EmploymentType, JobStatus
@@ -19,7 +19,7 @@ from app.jobs.models import (
     TITLE_MAX_LENGTH,
     TITLE_MIN_LENGTH,
 )
-from app.skills.schemas import normalise_skill_names
+from app.skills.schemas import SkillList
 
 MAX_APPLICATIONS_CEILING = 100_000
 
@@ -30,22 +30,17 @@ class JobBase(InputModel):
     department: str | None = Field(default=None, max_length=100)
     location: str | None = Field(default=None, max_length=120)
     employment_type: EmploymentType = EmploymentType.FULL_TIME
-    required_skills: list[str] = Field(default_factory=list)
+    required_skills: SkillList = Field(default_factory=list)
     min_experience_years: int = Field(default=0, ge=0, le=50)
     max_applications: int | None = Field(default=None, gt=0)
-
-    @field_validator("required_skills")
-    @classmethod
-    def normalise_skills(cls, value: list[str]) -> list[str]:
-        return normalise_skill_names(value)
 
 
 class JobCreate(JobBase):
     """Note the absence of `status`. A job is always created as a draft — letting a
     client post status="published" would skip the publishing transition entirely."""
 
-    # The caps apply to input only. JobRead shares JobBase, and it must keep reading
-    # every row already stored — including any saved before these limits existed.
+    # Caps that are input-only by history: JobRead no longer shares JobBase (see
+    # there), so every limit here applies to input alone.
     description: str = Field(min_length=DESCRIPTION_MIN_LENGTH, max_length=DESCRIPTION_MAX_LENGTH)
     max_applications: int | None = Field(default=None, gt=0, le=MAX_APPLICATIONS_CEILING)
 
@@ -71,18 +66,25 @@ class JobUpdate(PatchModel):
     department: str | None = Field(default=None, max_length=100)
     location: str | None = Field(default=None, max_length=120)
     employment_type: EmploymentType | None = None
-    required_skills: list[str] | None = None
+    required_skills: SkillList | None = None
     min_experience_years: int | None = Field(default=None, ge=0, le=50)
     max_applications: int | None = Field(default=None, gt=0, le=MAX_APPLICATIONS_CEILING)
 
-    @field_validator("required_skills")
-    @classmethod
-    def normalise_skills(cls, value: list[str] | None) -> list[str] | None:
-        return None if value is None else normalise_skill_names(value)
 
+class JobRead(ReadModel):
+    """What the API returns. Deliberately not JobBase: input rules (the 50-year cap, the
+    skill-list cap) must not be re-applied to rows already stored, or one row written
+    by a script or saved before a rule existed would turn every job list into a 500."""
 
-class JobRead(JobBase, ReadModel):
     id: uuid.UUID
+    title: str
+    description: str
+    department: str | None
+    location: str | None
+    employment_type: EmploymentType
+    required_skills: list[str]
+    min_experience_years: int
+    max_applications: int | None
     status: JobStatus
     published_at: datetime | None
     publish_error: str | None = Field(

@@ -159,7 +159,10 @@ def publish_and_wait(job: dict, token: str, timeout: float = 60) -> dict:
     """
     status, accepted = call("POST", f"/jobs/{job['id']}/publish", token=token)
     if status != 202:
-        return accepted
+        # Temporal down, say: the job stays a draft. Return the job, not the error body,
+        # so the caller can still print and use it.
+        print(f"  ! {job['title']} could not be published ({code_of(accepted)})")
+        return job
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         _, current = call("GET", f"/jobs/{job['id']}", token=token)

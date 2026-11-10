@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useMutationState } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { Application, ApplicationStage } from "../../api/types";
-import { useMoveApplication } from "../../hooks/usePipeline";
+import { moveMutationKey, useMoveApplication, type MoveVariables } from "../../hooks/usePipeline";
 import { focusIsLost } from "../../hooks/useTableFocusHandoff";
 import { describeError, humanize, useToast } from "../ui";
 import { describeMove } from "./model";
@@ -12,8 +13,9 @@ export interface StageChange {
   requestMove: (application: Application, stage: ApplicationStage) => void;
   /** Render it once, anywhere on the page. */
   dialog: ReactNode;
-  /** The application whose move is in flight, so its card can show it. */
-  pendingId: string | undefined;
+  /** Every application whose move is in flight, so each card can show it — moves
+   * overlap when a second card is moved before the first answers. */
+  pendingIds: ReadonlySet<string>;
 }
 
 const ANCHOR_ATTRIBUTE = "data-stage-change-anchor";
@@ -48,6 +50,15 @@ export function useStageChange(jobId: string, nameOf: (application: Application)
   const toast = useToast();
   const [request, setRequest] = useState<StageChangeRequest | null>(null);
   const landing = useRef<Landing | null>(null);
+  const pendingList = useMutationState({
+    filters: { mutationKey: moveMutationKey(jobId), status: "pending" },
+    select: (mutation) => (mutation.state.variables as MoveVariables | undefined)?.id,
+  });
+  const pendingKey = pendingList.filter(Boolean).join(",");
+  const pendingIds = useMemo(
+    () => new Set(pendingKey ? pendingKey.split(",") : []),
+    [pendingKey],
+  );
 
   // Runs after every render of the page: the card moves in whichever render the cache
   // update lands in, and this hook cannot tell which one that is.
@@ -110,7 +121,7 @@ export function useStageChange(jobId: string, nameOf: (application: Application)
   return {
     requestMove,
     dialog,
-    pendingId: move.isPending ? move.variables?.id : undefined,
+    pendingIds,
   };
 }
 

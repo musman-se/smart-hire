@@ -5,9 +5,9 @@
  * coming back as a 422 for the whole form.
  */
 
-import type { Candidate, CandidateUpdate } from "../../api/types";
+import { MAX_SKILLS, type Candidate, type CandidateUpdate } from "../../api/types";
 import { looksLikePhone } from "../../lib/phone";
-import { FULL_NAME_LIMITS } from "../auth/validation";
+import { FULL_NAME_LIMITS, codePointLength } from "../auth/validation";
 
 export const LIMITS = {
   fullNameMin: FULL_NAME_LIMITS.min,
@@ -16,6 +16,7 @@ export const LIMITS = {
   phoneMax: 32,
   yearsMax: 60,
   skillMax: 64,
+  skillsMax: MAX_SKILLS,
   resumeUrlMax: 500,
 } as const;
 
@@ -46,10 +47,15 @@ export function valuesFromCandidate(candidate: Candidate): ProfileValues {
   };
 }
 
+/**
+ * A full web address: http or https, with a host — the backend's rule for a resume
+ * link. Anything else is never rendered as a link either, so a stored "javascript:"
+ * or "data:" value cannot run when clicked.
+ */
 export function isHttpUrl(value: string): boolean {
   try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
+    const url = new URL(value.trim());
+    return (url.protocol === "http:" || url.protocol === "https:") && url.hostname !== "";
   } catch {
     return false;
   }
@@ -58,16 +64,17 @@ export function isHttpUrl(value: string): boolean {
 export function validateProfile(values: ProfileValues): ProfileErrors {
   const errors: ProfileErrors = {};
 
-  const name = values.full_name.trim();
-  if (name.length < LIMITS.fullNameMin) errors.full_name = "Enter your full name.";
-  else if (name.length > LIMITS.fullNameMax) {
+  // Trimmed first, as the server does: a name of spaces is no name.
+  const name = codePointLength(values.full_name.trim());
+  if (name < LIMITS.fullNameMin) errors.full_name = "Enter your full name.";
+  else if (name > LIMITS.fullNameMax) {
     errors.full_name = `Keep it under ${LIMITS.fullNameMax} characters.`;
   }
 
-  if (values.headline.trim().length > LIMITS.headlineMax) {
+  if (codePointLength(values.headline.trim()) > LIMITS.headlineMax) {
     errors.headline = `Keep it under ${LIMITS.headlineMax} characters.`;
   }
-  if (values.phone.trim().length > LIMITS.phoneMax) {
+  if (codePointLength(values.phone.trim()) > LIMITS.phoneMax) {
     errors.phone = `Keep it under ${LIMITS.phoneMax} characters.`;
   } else if (!looksLikePhone(values.phone)) {
     errors.phone = "Enter a phone number (digits, spaces, +, -), like +92 300 1234567.";
@@ -78,15 +85,17 @@ export function validateProfile(values: ProfileValues): ProfileErrors {
     errors.years_experience = `Enter a whole number from 0 to ${LIMITS.yearsMax}.`;
   }
 
-  const longSkill = values.skills.find((skill) => skill.length > LIMITS.skillMax);
-  if (longSkill) {
+  const longSkill = values.skills.find((skill) => codePointLength(skill) > LIMITS.skillMax);
+  if (values.skills.length > LIMITS.skillsMax) {
+    errors.skills = `List at most ${LIMITS.skillsMax} skills — remove ${values.skills.length - LIMITS.skillsMax}.`;
+  } else if (longSkill) {
     errors.skills = `"${longSkill.slice(0, 20)}…" is too long — skills are at most ${LIMITS.skillMax} characters.`;
   }
 
   const url = values.resume_url.trim();
   if (url && !isHttpUrl(url)) {
     errors.resume_url = "Enter a full link starting with https://";
-  } else if (url.length > LIMITS.resumeUrlMax) {
+  } else if (codePointLength(url) > LIMITS.resumeUrlMax) {
     errors.resume_url = `Links are at most ${LIMITS.resumeUrlMax} characters.`;
   }
 

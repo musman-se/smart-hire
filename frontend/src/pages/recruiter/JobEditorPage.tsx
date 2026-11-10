@@ -16,6 +16,7 @@ import {
   type JobFormField,
   type JobFormValues,
 } from "../../components/jobs/jobForm";
+import { codePointLength } from "../../components/auth/validation";
 import { canEditJob, canPublishJob } from "../../components/jobs/jobLifecycle";
 import { JobPreviewCard } from "../../components/jobs/JobPreviewCard";
 import {
@@ -160,6 +161,12 @@ function JobEditor({ job }: { job?: Job }) {
 
   async function save(intent: SaveIntent) {
     if (saving || locked) return;
+    // "Save changes" is disabled with nothing changed, but mod+S still reaches here:
+    // it must not report a save that never happened and leave the page.
+    if (job && !dirty && intent === "save") {
+      toast.info("No changes to save");
+      return;
+    }
     setSubmitted(true);
     setSaveError(null);
 
@@ -245,7 +252,7 @@ function JobEditor({ job }: { job?: Job }) {
                   label="Job title"
                   required
                   error={errorFor("title")}
-                  labelAside={`${values.title.length} / ${JOB_LIMITS.titleMax}`}
+                  labelAside={`${codePointLength(values.title)} / ${JOB_LIMITS.titleMax}`}
                 >
                   <Input
                     value={values.title}
@@ -333,10 +340,11 @@ function JobEditor({ job }: { job?: Job }) {
                   id={fieldId("required_skills")}
                   label="Required skills"
                   error={errors.required_skills}
-                  hint="Press Enter or comma to add. Leave empty to accept any skill set."
+                  hint={`Press Enter or comma to add, up to ${JOB_LIMITS.skillsMax}. Leave empty to accept any skill set.`}
                 >
                   <TagInput
                     value={values.required_skills}
+                    maxTags={JOB_LIMITS.skillsMax}
                     onChange={(skills) => update("required_skills", skills)}
                     suggest={suggestSkills}
                     normalize={skillName}

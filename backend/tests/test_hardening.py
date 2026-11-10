@@ -39,7 +39,7 @@ async def test_an_outage_revert_does_not_undo_a_concurrent_close(
     job = await make_job(client, publish=False)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
 
-    async def close_then_fail(job_id: uuid.UUID) -> None:
+    async def close_then_fail(job_id: uuid.UUID, **_: object) -> None:
         async with sessions() as other:  # a second recruiter, mid-flight
             row = await other.get(Job, job_id)
             row.status = "closed"

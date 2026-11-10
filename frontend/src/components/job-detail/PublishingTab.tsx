@@ -32,6 +32,7 @@ const OUTCOME_BADGE: Record<PublishOutcome, { tone: BadgeTone; label: string }> 
   completed: { tone: "success", label: "Completed" },
   failed: { tone: "danger", label: "Failed" },
   stuck: { tone: "warning", label: "Needs a restart" },
+  stale: { tone: "warning", label: "Analysis out of date" },
 };
 
 /**
@@ -41,16 +42,18 @@ const OUTCOME_BADGE: Record<PublishOutcome, { tone: BadgeTone; label: string }> 
  * died, in which case publishing again is the recovery and is offered right here.
  */
 export function PublishingTab({ job }: { job: Job }) {
-  const { data: publication, isLoading, error } = useJobPublication(job.id, job.status);
+  const { data: publication, isLoading, error } = useJobPublication(job);
   const transition = useJobTransition(job.id);
   const toast = useToast();
   const run = publication?.workflow;
   // The publication is re-read every second while the job is processing, so this
   // render-time clock moves on with it.
-  const progress = publishProgress(job.status, run, {
-    jobUpdatedAt: job.updated_at,
-    now: Date.now(),
-  });
+  const progress = publishProgress(
+    job.status,
+    run,
+    { jobUpdatedAt: job.updated_at, now: Date.now() },
+    job.publish_error,
+  );
   // Ticks once a second while the workflow runs, for its elapsed time.
   const now = useNow(progress.outcome === "running" ? 1000 : null);
 
@@ -141,6 +144,23 @@ export function PublishingTab({ job }: { job: Job }) {
             <span className="mono">{job.publish_error ?? publication?.publish_error ?? "No reason was recorded."}</span>
             <br />
             Fix the job if the reason points at it, then publish again.
+          </Notice>
+        )}
+
+        {progress.outcome === "stale" && (
+          <Notice
+            tone="rule"
+            title="Live — but its analysis is out of date"
+            action={
+              <Button size="sm" variant="primary" leftIcon="refresh" loading={transition.isPending} onClick={publish}>
+                Re-run analysis
+              </Button>
+            }
+          >
+            <span className="mono">{job.publish_error ?? "The last refresh did not finish."}</span>
+            <br />
+            Candidates can still find and apply to it. Its skills and keywords describe the
+            text before your last edit until the analysis runs again.
           </Notice>
         )}
 

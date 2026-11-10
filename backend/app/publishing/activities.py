@@ -44,7 +44,7 @@ from app.publishing.content import (
     find_skills,
 )
 from app.publishing.models import JobKeyword, JobSection, job_extracted_skills
-from app.skills.models import Skill
+from app.skills.models import Skill, job_skills
 from app.skills.service import resolve_skills
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,9 @@ class StoreContentInput:
 class MarkFailedInput:
     job_id: str
     reason: str
+    # A refresh of a live job (see PublishJobInput.refresh); defaults keep runs that
+    # started before this field existed working.
+    refresh: bool = False
 
 
 def _inject_fault(step: str) -> None:
@@ -102,7 +105,17 @@ class PublishingActivities:
         _inject_fault("extract_skills_and_keywords")
         async with self._sessions() as session:
             job = await self._load_job(session, job_id)
-            known = set(await session.scalars(select(Skill.name)))
+            # Skills some job requires — names recruiters chose. Not every row in
+            # `skills`: candidates add to that table, and one who listed "the", "and"
+            # and "team" made those "skills" in every job published afterwards,
+            # skewing every match score.
+            known = set(
+                await session.scalars(
+                    select(Skill.name)
+                    .join(job_skills, job_skills.c.skill_id == Skill.id)
+                    .distinct()
+                )
+            )
             # Capped like new input: a row saved before the cap existed is analysed in
             # full up to it, rather than overflowing a column on every retry.
             title, description = job.title, job.description[:DESCRIPTION_MAX_LENGTH]
@@ -199,13 +212,31 @@ class PublishingActivities:
                 .returning(Job.id)
             )
             published = result.scalar_one_or_none() is not None
+            if not published:
+                # A content refresh of a live job: it stays PUBLISHED, and a reason left
+                # by an earlier failed refresh no longer applies.
+                await session.execute(
+                    update(Job)
+                    .where(
+                        Job.id == uuid.UUID(job_id),
+                        Job.status == JobStatus.PUBLISHED,
+                        Job.publish_error.is_not(None),
+                    )
+                    .values(publish_error=None)
+                )
             await session.commit()
         logger.info("job_mark_published job=%s changed=%s", job_id, published)
         return published
 
     @activity.defn(name="mark_job_publish_failed")
     async def mark_job_publish_failed(self, data: MarkFailedInput) -> bool:
-        """Compensation: record why publishing failed and make the job retryable."""
+        """Compensation: record why publishing failed and make the job retryable.
+
+        A job mid-publish moves to PUBLISH_FAILED. A live job whose content refresh
+        failed stays PUBLISHED — taking it offline over a re-analysis would be worse —
+        but the reason is recorded, so the recruiter sees the analysis is stale and can
+        run it again (POST /jobs/{id}/publish).
+        """
         async with self._sessions() as session:
             result = await session.execute(
                 update(Job)
@@ -214,6 +245,14 @@ class PublishingActivities:
                 .returning(Job.id)
             )
             changed = result.scalar_one_or_none() is not None
+            if not changed and data.refresh:
+                result = await session.execute(
+                    update(Job)
+                    .where(Job.id == uuid.UUID(data.job_id), Job.status == JobStatus.PUBLISHED)
+                    .values(publish_error=f"Refreshing the analysis failed: {data.reason}"[:1000])
+                    .returning(Job.id)
+                )
+                changed = result.scalar_one_or_none() is not None
             await session.commit()
         logger.warning("job_publish_failed job=%s reason=%s", data.job_id, data.reason)
         return changed

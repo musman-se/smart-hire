@@ -1,10 +1,10 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import type { Application, ApplicationStage } from "../../api/types";
 import { useAdvanceStage } from "../../hooks/queries";
 import { describeMove } from "../pipeline/model";
 import { StageChangeDialog } from "../pipeline/StageChangeDialog";
-import { useToast } from "../ui";
+import { describeError, useToast } from "../ui";
 import { recruiterTargets } from "./stages";
 
 export interface StageMoveRequest {
@@ -26,12 +26,40 @@ export interface StageMove {
  * It confirms with the same dialog as the per-job screens (useStageChange), so a move
  * reads the same everywhere. It is not optimistic, because these screens do not read
  * the one job's cache that useStageChange updates early. The dialog stays open until the
- * server answers and shows a refusal in place.
+ * server answers — Escape and the close button wait too — and shows a refusal in place.
+ * Should the recruiter have left the page by then, the refusal is toasted instead: a
+ * move that did not happen must never pass silently.
  */
 export function useStageMove(): StageMove {
-  const advance = useAdvanceStage();
   const toast = useToast();
   const [request, setRequest] = useState<StageMoveRequest | null>(null);
+  // The dialog showing now, and whether this screen still is — for an answer that
+  // arrives after the recruiter left the page (the dialog itself cannot be closed while
+  // the move is in flight).
+  const shown = useRef<StageMoveRequest | null>(null);
+  const mounted = useRef(false);
+  useEffect(() => {
+    shown.current = request;
+  }, [request]);
+  useEffect(() => {
+    // Set in the effect, not only at creation: StrictMode runs every effect's cleanup
+    // and then the effect again on mount, and a ref set true only once would stay
+    // false from then on — every refusal toasted on top of the dialog showing it.
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const advance = useAdvanceStage({
+    onError: (error, variables) => {
+      // Still on screen: the dialog shows the refusal in place.
+      if (mounted.current && shown.current?.application.id === variables.id) return;
+      const { title, message } = describeError(error);
+      toast.error(title, {
+        description: `${message} ${variables.candidateName ?? "The applicant"} was not moved.`,
+      });
+    },
+  });
 
   const { reset } = advance;
   const requestMove = useCallback(
@@ -47,7 +75,7 @@ export function useStageMove(): StageMove {
     if (!request) return;
     const { application, candidateName, jobTitle } = request;
     advance.mutate(
-      { id: application.id, stage, note: note || undefined },
+      { id: application.id, stage, note: note || undefined, candidateName },
       {
         onSuccess: () => {
           toast.success(describeMove(candidateName, stage), {

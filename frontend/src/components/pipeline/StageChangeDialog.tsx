@@ -100,7 +100,10 @@ export function StageChangeDialog({
       size="sm"
       initialFocus={noteRef}
       // A stray click outside must not throw away a reason already written.
-      closeOnBackdrop={note.trim() === "" && !pending}
+      closeOnBackdrop={note.trim() === ""}
+      // While the move is in flight, Escape and the X wait for the answer: a refusal is
+      // shown here, and a closed dialog would leave it nowhere to go.
+      dismissible={!pending}
       title={rejecting ? `Reject ${request.candidateName}?` : `${moveLabel(stage)}?`}
       description={
         rejecting

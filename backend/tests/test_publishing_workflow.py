@@ -17,12 +17,16 @@ import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import async_sessionmaker
-from temporalio.client import Client, WorkflowFailureError
+from temporalio.client import Client, WorkflowExecutionStatus, WorkflowFailureError
 
+from app.applications import processor as processor_module
+from app.applications.processor import TemporalApplicationProcessor
 from app.core.config import settings
 from app.jobs.enums import JobStatus
 from app.jobs.models import Job
 from app.publishing import activities as publishing_activities
+from app.publishing import publisher as publisher_module
+from app.publishing.publisher import TemporalJobPublisher
 from app.publishing.workflow import PublishJobInput, PublishJobWorkflow
 from app.worker import build_worker
 from tests.factories import make_job
@@ -127,3 +131,67 @@ async def test_a_deleted_job_fails_fast_without_retrying(
 
     # With retries the backoff alone would be 1 + 2 + 4 + 8 = 15 seconds.
     assert asyncio.get_running_loop().time() - started < 10
+
+
+# --- The real start policies -------------------------------------------------------------
+#
+# The API tests use inline fakes, so the conflict policies TemporalJobPublisher and
+# TemporalApplicationProcessor pass to Temporal were never exercised: changing either
+# would have left the suite green. These start real runs — on a private task queue that
+# no worker polls, so nothing executes; only the server's handling of the id is tested.
+
+
+@pytest_asyncio.fixture
+async def private_queue(temporal: Client, monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[str]:
+    queue = f"test-start-policy-{uuid.uuid4()}"
+    monkeypatch.setattr(settings, "temporal_task_queue", queue)
+    started: list[str] = []
+    yield started  # workflow ids to clean up
+    for workflow_id in started:
+        try:
+            await temporal.get_workflow_handle(workflow_id).terminate("test cleanup")
+        except Exception:  # noqa: BLE001 - already finished, or never started
+            pass
+
+
+async def test_a_second_publish_replaces_the_run_in_flight(
+    temporal: Client, private_queue: list[str]
+) -> None:
+    """TERMINATE_EXISTING: the newest request wins. FAIL, the default, would make every
+    second Publish answer 503."""
+    job_id = uuid.uuid4()
+    workflow_id = publisher_module.workflow_id_for(job_id)
+    private_queue.append(workflow_id)
+    publisher = TemporalJobPublisher(temporal)
+
+    await publisher.start(job_id)
+    first = (await temporal.get_workflow_handle(workflow_id).describe()).run_id
+    await publisher.start(job_id)
+    second = await publisher.describe(job_id)
+
+    assert second is not None and second.run_id != first
+    assert second.status == "running"
+    replaced = await temporal.get_workflow_handle(workflow_id, run_id=first).describe()
+    assert replaced.status == WorkflowExecutionStatus.TERMINATED
+
+
+async def test_a_second_process_start_attaches_to_the_run_in_flight(
+    temporal: Client, private_queue: list[str]
+) -> None:
+    """USE_EXISTING: scoring and the confirmation run once per application, however
+    often processing is requested."""
+    application_id = uuid.uuid4()
+    workflow_id = processor_module.workflow_id_for(application_id)
+    private_queue.append(workflow_id)
+    processor = TemporalApplicationProcessor(temporal)
+
+    await processor.start(application_id)
+    first = (await temporal.get_workflow_handle(workflow_id).describe()).run_id
+    await processor.start(application_id)
+    second = (await temporal.get_workflow_handle(workflow_id).describe()).run_id
+
+    assert second == first
+
+
+async def test_describe_reports_no_run_for_a_job_never_published(temporal: Client) -> None:
+    assert await TemporalJobPublisher(temporal).describe(uuid.uuid4()) is None

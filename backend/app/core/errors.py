@@ -23,7 +23,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.logging import get_request_id
+from app.core.logging import REQUEST_ID_HEADER, get_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -81,17 +81,31 @@ class UnprocessableError(DomainError):
 def _error_response(
     status_code: int, code: str, message: str, headers: dict[str, str] | None = None
 ) -> JSONResponse:
+    request_id = get_request_id()
+    # The id in the header as well as the body. RequestContextMiddleware adds it to most
+    # responses, but a 500 is sent by Starlette's outermost ServerErrorMiddleware, which
+    # never passes through it.
+    with_id = {REQUEST_ID_HEADER: request_id} if request_id else {}
     return JSONResponse(
         status_code=status_code,
-        headers=headers,
+        headers={**with_id, **(headers or {})},
         content={
             "error": {
                 "code": code,
                 "message": message,
-                "request_id": get_request_id(),
+                "request_id": request_id,
             }
         },
     )
+
+
+# Statuses raised as plain HTTPExceptions that deserve a code of their own.
+_HTTP_ERROR_CODES = {status.HTTP_413_CONTENT_TOO_LARGE: "payload_too_large"}
+
+
+def payload_too_large_response(message: str) -> JSONResponse:
+    """413 for a body refused before any route ran (see app.core.limits)."""
+    return _error_response(status.HTTP_413_CONTENT_TOO_LARGE, "payload_too_large", message)
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -116,8 +130,9 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(StarletteHTTPException)
     async def handle_http_exception(_: Request, exc: StarletteHTTPException) -> JSONResponse:
         # exc.headers carries what the status code requires — Allow on a 405.
+        code = _HTTP_ERROR_CODES.get(exc.status_code, "http_error")
         return _error_response(
-            exc.status_code, "http_error", str(exc.detail), getattr(exc, "headers", None)
+            exc.status_code, code, str(exc.detail), getattr(exc, "headers", None)
         )
 
     @app.exception_handler(Exception)

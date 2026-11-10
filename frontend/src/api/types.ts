@@ -32,6 +32,9 @@ export type RecruiterInvite = Schemas["RecruiterInvite"];
 export type RecruiterInvited = Schemas["RecruiterInvited"];
 export type InvitationIssued = Schemas["InvitationIssued"];
 export type InvitationPreview = Schemas["InvitationPreview"];
+/** A recruiter's (or admin's) own profile: the name and title they go by. */
+export type RecruiterProfile = Schemas["RecruiterRead"];
+export type RecruiterUpdate = Schemas["RecruiterUpdate"];
 
 export type Application = Schemas["ApplicationRead"];
 export type ApplicationCreate = Schemas["ApplicationCreate"];
@@ -53,15 +56,27 @@ export interface Page<T> {
   offset: number;
 }
 
-export const JOB_STATUSES = [
+/**
+ * `list`, unchanged — but it compiles only if it names every member of `Union`. A
+ * value the backend adds to an enum then fails the build here (the next
+ * `generate:api` brings it in), instead of becoming a status no tab, filter or count
+ * ever offers. The error names what is missing.
+ */
+function everyOf<Union extends string>() {
+  return <const List extends readonly Union[]>(
+    list: List & ([Exclude<Union, List[number]>] extends [never] ? unknown : { missing: Exclude<Union, List[number]> }),
+  ): List => list;
+}
+
+export const JOB_STATUSES = everyOf<JobStatus>()([
   "draft",
   "processing",
   "published",
   "publish_failed",
   "closed",
-] as const;
+]);
 
-export const APPLICATION_STAGES = [
+export const APPLICATION_STAGES = everyOf<ApplicationStage>()([
   "applied",
   "screening",
   "interview",
@@ -69,7 +84,7 @@ export const APPLICATION_STAGES = [
   "hired",
   "rejected",
   "withdrawn",
-] as const;
+]);
 
 /** Mirrors ApplicationStage.terminal() — these stop counting toward the limit. */
 export const TERMINAL_STAGES: ReadonlySet<ApplicationStage> = new Set([
@@ -99,12 +114,16 @@ export const MAX_ACTIVE_APPLICATIONS = 10;
 export const COVER_LETTER_MAX_LENGTH = 5000;
 export const STAGE_NOTE_MAX_LENGTH = 1000;
 
-export const EMPLOYMENT_TYPES = [
+export const EMPLOYMENT_TYPES = everyOf<EmploymentType>()([
   "full_time",
   "part_time",
   "contract",
   "internship",
-] as const;
+]);
+
+/** Mirrors the backend's cap on a skill list — a job's required_skills and a
+ * candidate's skills alike (MAX_SKILLS in app/skills/schemas.py). */
+export const MAX_SKILLS = 50;
 
 /**
  * Mirrors ALLOWED_TRANSITIONS in the backend's application_service.

@@ -1,8 +1,66 @@
 """Schema base classes and response shapes shared by every domain."""
 
-from typing import Any, ClassVar, Self
+from typing import Annotated, Any, ClassVar, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
+
+from app.core.names import FULL_NAME_MAX_LENGTH, FULL_NAME_MIN_LENGTH
+
+NUL_MESSAGE = "text may not contain the NUL character"
+
+
+def _reject_nul_in_text(value: str) -> str:
+    if "\x00" in value:
+        raise ValueError(NUL_MESSAGE)
+    return value
+
+
+# A free-text query parameter (?search=, ?skill=). Request bodies are checked for NUL by
+# InputModel; query strings are not bodies, so they get this instead — without it,
+# "?search=a%00b" reached Postgres and came back as a 500. Bounded, because the value
+# ends up in an ILIKE pattern.
+# Plain pydantic, not fastapi.Query: the models import this module (for ReadModel's
+# neighbours), and the model layer must not pull in the web framework.
+QueryText = Annotated[str, StringConstraints(max_length=200), AfterValidator(_reject_nul_in_text)]
+
+
+# A person's full name, wherever one is typed: registration, a candidate's profile, a
+# recruiter's or admin's profile, the command line. Trimmed *before* the length is
+# checked, so surrounding spaces never count against the limit and "   " is refused.
+# The numbers live in app.core.names, which the models share.
+
+
+def normalise_full_name(value: str) -> str:
+    value = value.strip()
+    if not FULL_NAME_MIN_LENGTH <= len(value) <= FULL_NAME_MAX_LENGTH:
+        raise ValueError(
+            f"The name must be {FULL_NAME_MIN_LENGTH} to {FULL_NAME_MAX_LENGTH} characters."
+        )
+    return value
+
+
+FullName = Annotated[
+    str,
+    AfterValidator(normalise_full_name),
+    # The bounds again, for the OpenAPI schema only: the validator above enforces them.
+    Field(json_schema_extra={"minLength": FULL_NAME_MIN_LENGTH, "maxLength": FULL_NAME_MAX_LENGTH}),
+]
+
+
+def contains_pattern(term: str) -> str:
+    """An ILIKE pattern matching `term` anywhere, with the wildcards in it escaped:
+    "100%" finds "100%", not everything that starts with "100". Use with
+    `.ilike(contains_pattern(term), escape="\\")`, which a trigram index still serves.
+    """
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
 
 
 class ReadModel(BaseModel):
@@ -43,8 +101,9 @@ class InputModel(BaseModel):
         if isinstance(data, dict):
             for value in data.values():
                 texts = value if isinstance(value, list) else [value]
-                if any(isinstance(text, str) and "\x00" in text for text in texts):
-                    raise ValueError("text may not contain the NUL character")
+                for text in texts:
+                    if isinstance(text, str):
+                        _reject_nul_in_text(text)
         return data
 
 

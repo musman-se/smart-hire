@@ -37,7 +37,7 @@ from app.candidates.service import get_candidate
 from app.core.config import settings
 from app.core.errors import DomainError
 from app.jobs.enums import JobStatus
-from app.jobs.errors import JobNotFoundError, JobNotOpenError
+from app.jobs.errors import JobNotFoundError
 from app.jobs.models import Job
 from app.jobs.service import get_job
 
@@ -175,15 +175,21 @@ async def _apply(
     job = await get_job(session, job_id, lock=True)
     candidate = await get_candidate(session, candidate_id, lock=True)
 
-    # Answered as GET /jobs/{id} answers the candidate. A closed job they applied to
-    # is visible to them, and no longer accepting: 409. Any other unpublished job does
-    # not exist to them: 404 — a 409 would confirm a hidden job is real.
-    if job.status is not JobStatus.PUBLISHED:
-        if job.status is JobStatus.CLOSED and await _existing_application(
-            session, job.id, candidate.id
-        ):
-            raise JobNotOpenError("This job is no longer accepting applications.")
+    # A job the candidate cannot see does not exist to them: 404, exactly where
+    # GET /jobs/{id} answers 404 — published jobs, plus closed ones they applied to. A
+    # draft is hidden even from its earlier applicants (it may be rewritten for another
+    # role), so "already applied" there would confirm a hidden draft is real.
+    #
+    # Rule 1 comes first among the refusals, friendly path: someone who has already
+    # applied is told so, not that the job is full or that they no longer qualify —
+    # both of which can become true after they applied. The pre-check is not what makes
+    # the rule correct; the unique constraint is (see the commit below).
+    applied = await _existing_application(session, job.id, candidate.id) is not None
+    visible = job.status is JobStatus.PUBLISHED or (job.status is JobStatus.CLOSED and applied)
+    if not visible:
         raise JobNotFoundError(job.id)
+    if applied:
+        raise DuplicateApplicationError("This candidate has already applied to this job.")
 
     _check_eligibility(job, candidate)
 
@@ -201,11 +207,6 @@ async def _apply(
             raise JobCapacityReachedError(
                 f"Job {job.id} has reached its cap of {job.max_applications} applications."
             )
-
-    # Rule 1, friendly path: a pre-check so the common case returns a clear 409 without
-    # burning a failed transaction. It is not what makes the rule correct.
-    if await _existing_application(session, job.id, candidate.id) is not None:
-        raise DuplicateApplicationError("This candidate has already applied to this job.")
 
     # The id is set here rather than left to the INSERT, so the first history entry
     # can reference it in the same transaction.
@@ -261,11 +262,39 @@ async def list_applications(
     rows = await session.scalars(
         select(Application)
         .where(*filters)
-        .order_by(Application.created_at.desc())
+        .order_by(Application.created_at.desc(), Application.id.desc())
         .limit(limit)
         .offset(offset)
     )
     return list(rows), total
+
+
+async def count_by_stage(
+    session: AsyncSession, *, job_id: uuid.UUID | None = None
+) -> dict[ApplicationStage, int]:
+    """How many applications are in each stage — every stage, zero included — across
+    all jobs or for one. One GROUP BY, where the console sent a count per stage."""
+    query = select(Application.stage, func.count()).group_by(Application.stage)
+    if job_id is not None:
+        query = query.where(Application.job_id == job_id)
+    counts = dict.fromkeys(ApplicationStage, 0)
+    for stage, count in (await session.execute(query)).tuples():
+        counts[stage] = count
+    return counts
+
+
+async def count_by_job(session: AsyncSession, job_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+    """Every application each job has received, whatever its stage — what a job's
+    max_applications cap is measured against. Zero for a job with none."""
+    counts = dict.fromkeys(job_ids, 0)
+    rows = await session.execute(
+        select(Application.job_id, func.count())
+        .where(Application.job_id.in_(job_ids))
+        .group_by(Application.job_id)
+    )
+    for job_id, count in rows.tuples():
+        counts[job_id] = count
+    return counts
 
 
 async def advance_stage(

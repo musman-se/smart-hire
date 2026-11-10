@@ -114,7 +114,9 @@ docker compose exec api python -m app.auth.cli create-recruiter alice@example.co
 candidate and application. An admin does all of that and manages the hiring team. A candidate reads published jobs, applies as themselves, and
 reads, edits and withdraws only their own profile and applications — without the match
 score or the recruiter's stage notes. A closed job stays readable to the candidates who
-applied to it. Another user's profile or application, or a job a candidate could never
+applied to it; reopened as a draft it is hidden again, from them too, until it is
+republished — a draft may be rewritten for another role. Candidates never see a job's
+`publish_error`. Another user's profile or application, or a job a candidate could never
 have seen, answers 404, as if it did not exist. Full table:
 [ARCHITECTURE.md §4.25](../docs/ARCHITECTURE.md#425-secure-by-default-roles-at-the-boundary-404-for-other-peoples-data).
 
@@ -124,10 +126,11 @@ have seen, answers 404, as if it did not exist. Full table:
 |---|---|---|
 | GET | `/jobs` | List. Filters: `status`, `skill`, `search`, `limit`, `offset`. Candidates get published jobs only |
 | POST | `/jobs` | Create — always as a draft |
+| GET | `/jobs/status-counts` | Recruiters: how many jobs in each status, in one request |
 | GET | `/jobs/{job_id}` | Fetch one |
 | PATCH | `/jobs/{job_id}` | Partial update; unsent fields untouched |
 | DELETE | `/jobs/{job_id}` | Delete; applications cascade |
-| POST | `/jobs/{job_id}/publish` | **202** — starts the publishing workflow; job → `processing` |
+| POST | `/jobs/{job_id}/publish` | **202** — starts the publishing workflow; job → `processing`. On a published job, re-runs the analysis (it stays published) |
 | GET | `/jobs/{job_id}/publication` | Job status + workflow status + live step |
 | GET | `/jobs/{job_id}/content` | Extracted sections, keywords, mentioned skills |
 | POST | `/jobs/{job_id}/close` | → closed |
@@ -137,7 +140,7 @@ have seen, answers 404, as if it did not exist. Full table:
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/candidates` | List (recruiters). Filters: `skill`, `search`, `min_experience` |
+| GET | `/candidates` | List (recruiters). Filters: `skill`, `search`, `min_experience`, and `ids` (repeat it, up to 100) to fetch many by id in one request |
 | GET | `/candidates/{candidate_id}` | Fetch one — a candidate only their own |
 | PATCH | `/candidates/{candidate_id}` | Update your profile (email excluded) |
 | DELETE | `/candidates/{candidate_id}` | Delete your account, profile and applications |
@@ -166,6 +169,8 @@ A staff profile is created with its account: by an admin's invitation, or by the
 | POST | `/jobs/{job_id}/applications` | Apply as the signed-in candidate — enforces all three rules |
 | GET | `/jobs/{job_id}/applications` | Applications for one job |
 | GET | `/applications` | List. Filters: `job_id`, `candidate_id`, `stage`. A candidate gets their own |
+| GET | `/applications/stage-counts` | Recruiters: how many applications in each stage, across all jobs or one `job_id` |
+| GET | `/applications/job-counts` | Recruiters: applications received per job (repeat `job_id`, up to 100) |
 | GET | `/applications/{application_id}` | Fetch one |
 | POST | `/applications/{application_id}/stage` | Advance through the pipeline |
 | DELETE | `/applications/{application_id}` | Withdraw (the candidate) — moves to `withdrawn`, keeps the row |
@@ -248,8 +253,12 @@ least one of them.
 
 **Application limits.** A candidate may hold `MAX_APPLICATIONS_PER_CANDIDATE` (default 10)
 applications in non-terminal stages. `hired`, `rejected` and `withdrawn` do not count, so
-a rejected candidate is not locked out. A job may also set `max_applications` as its own
+a rejected candidate is not locked out. Applications to a *closed* job still count: closing
+stops intake, it does not end the pipeline — the recruiter may still hire from it. A
+candidate frees the slot by withdrawing. A job may also set `max_applications` as its own
 cap. Both counts are taken under row locks, so they hold under concurrent requests.
+Applying twice is always answered `duplicate_application`, checked before every other
+rule — not "job full" or "not eligible", which can become true after someone applied.
 
 **Stage machine.** `applied → screening → interview → offer → hired`, with `rejected`
 (the recruiter's decision) and `withdrawn` (the candidate's) reachable from any active

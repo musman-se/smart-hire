@@ -43,6 +43,19 @@ describe("validateJobForm", () => {
     expect(validateJobForm(valid)).toEqual({});
   });
 
+  it("counts characters as the server does: an emoji is one", () => {
+    const title = "\u{1F680}".repeat(JOB_LIMITS.titleMax);
+    expect(validateJobForm({ ...valid, title }).title).toBeUndefined();
+    expect(validateJobForm({ ...valid, title: `${title}x` }).title).toMatch(/at most/);
+  });
+
+  it("caps the required skills at the server's limit", () => {
+    const required_skills = Array.from({ length: JOB_LIMITS.skillsMax + 2 }, (_, i) => `s${i}`);
+    expect(validateJobForm({ ...valid, required_skills }).required_skills).toBe(
+      "List at most 50 skills — remove 2.",
+    );
+  });
+
   it("requires a title and description of the server's minimum length", () => {
     const errors = validateJobForm({ ...valid, title: "  ", description: "too short" });
     expect(errors.title).toBe("Title is required.");

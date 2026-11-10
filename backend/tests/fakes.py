@@ -3,11 +3,13 @@
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from temporalio.exceptions import ApplicationError
 
 from app.applications.activities import ApplicationActivities
 from app.core.temporal import WorkflowUnavailableError
 from app.publishing.activities import MarkFailedInput, PublishingActivities, StoreContentInput
 from app.publishing.publisher import WorkflowRun
+from app.publishing.workflow import failure_reason
 
 
 class InlineJobPublisher:
@@ -24,11 +26,13 @@ class InlineJobPublisher:
         self.activities = PublishingActivities(session_factory)
         self.available = True
         self.starts: list[uuid.UUID] = []
+        self.refreshes: list[bool] = []  # the refresh flag of each start, in order
 
-    async def start(self, job_id: uuid.UUID) -> None:
+    async def start(self, job_id: uuid.UUID, *, refresh: bool = False) -> None:
         if not self.available:
             raise WorkflowUnavailableError()
         self.starts.append(job_id)
+        self.refreshes.append(refresh)
 
         job = str(job_id)
         try:
@@ -39,8 +43,16 @@ class InlineJobPublisher:
             )
             await self.activities.mark_job_published(job)
         except Exception as exc:  # noqa: BLE001 - mirrors the workflow's compensation
+            # Shaped as Temporal hands the workflow a failed activity's cause — an
+            # ApplicationError typed with the exception's class — and worded by the same
+            # failure_reason, so API tests see exactly what a recruiter would.
+            cause = (
+                exc
+                if isinstance(exc, ApplicationError)
+                else ApplicationError(str(exc), type=type(exc).__name__)
+            )
             await self.activities.mark_job_publish_failed(
-                MarkFailedInput(job_id=job, reason=str(exc))
+                MarkFailedInput(job_id=job, reason=failure_reason(cause), refresh=refresh)
             )
 
     async def describe(self, job_id: uuid.UUID) -> WorkflowRun | None:

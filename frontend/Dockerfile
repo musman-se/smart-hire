@@ -29,6 +29,9 @@ FROM nginx:1.27-alpine
 COPY dist /usr/share/nginx/html
 # Rendered to /etc/nginx/conf.d/default.conf at startup, with API_UPSTREAM substituted.
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+# Security headers, included by the server block and by each location that sets its own
+# headers (see the file for why both). Outside conf.d, which nginx loads by itself.
+COPY nginx/security-headers.conf /etc/nginx/snippets/security-headers.conf
 ENV API_UPSTREAM=http://api:8000
 
 EXPOSE 80

@@ -2,6 +2,9 @@ import { useCallback, useRef } from "react";
 
 import { ApiError, newIdempotencyKey } from "../api/client";
 
+/** The server is still working on the first request sent with this key. */
+export const IDEMPOTENCY_IN_PROGRESS = "idempotency_in_progress";
+
 /**
  * One Idempotency-Key per intended action.
  *
@@ -14,8 +17,10 @@ import { ApiError, newIdempotencyKey } from "../api/client";
  * with the outcome, and the next submit is a new action with a new key. Keeping the key
  * after a refusal would replay the stored refusal for a day, even after its cause was
  * fixed (the job reopened, the candidate's profile updated). A 5xx is not an answer:
- * the server releases the key, so it is kept for the retry. Changing the input also
- * starts a new action.
+ * the server releases the key, so it is kept for the retry. Neither is a 409
+ * `idempotency_in_progress`: the first attempt is still running, and only the same key
+ * will get its outcome — a fresh one would run the action a second time. Changing the
+ * input also starts a new action.
  */
 export function useIdempotencyKey(input: unknown) {
   const serialized = JSON.stringify(input);
@@ -29,7 +34,9 @@ export function useIdempotencyKey(input: unknown) {
     const unanswered =
       error !== null &&
       error !== undefined &&
-      (!(error instanceof ApiError) || error.status >= 500);
+      (!(error instanceof ApiError) ||
+        error.status >= 500 ||
+        error.code === IDEMPOTENCY_IN_PROGRESS);
     // Cleared, so the next render — the mutation's own state change triggers one —
     // generates a fresh key.
     if (!unanswered) current.current = null;

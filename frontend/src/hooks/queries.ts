@@ -8,20 +8,24 @@
  */
 
 import {
+  hashKey,
   useMutation,
   useQueries,
   useQuery,
   useQueryClient,
   type QueryClient,
+  type QueryKey,
 } from "@tanstack/react-query";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import {
+  MAX_IDS_PER_REQUEST,
   applicationsApi,
   authApi,
   candidatesApi,
   healthApi,
   jobsApi,
+  recruitersApi,
   skillsApi,
   type ApplicationFilters,
   type CandidateFilters,
@@ -37,8 +41,8 @@ import {
   type CandidateUpdate,
   type Job,
   type JobCreate,
-  type JobStatus,
   type JobUpdate,
+  type RecruiterUpdate,
 } from "../api/types";
 import { session } from "../auth/session";
 import { scorePollInterval } from "../components/applications/stages";
@@ -54,19 +58,22 @@ export const keys = {
   publication: (id: string, status: string) => ["jobs", "publication", id, status] as const,
   content: (id: string, processedAt: string | null | undefined) =>
     ["jobs", "content", id, processedAt] as const,
-  /** A total per status (limit=1 reads). Under "jobs", so any job change refreshes it. */
-  jobStatusCount: (status: JobStatus) => ["jobs", "count", status] as const,
+  /** Every status's total, in one read. Under "jobs", so any job change refreshes it. */
+  jobStatusCounts: ["jobs", "count"] as const,
 
   candidates: ["candidates"] as const,
   candidateList: (filters: CandidateFilters) => ["candidates", "list", filters] as const,
   candidate: (id: string) => ["candidates", "detail", id] as const,
+  /** One batch of candidates by id; `ids` sorted, so the order asked in does not matter. */
+  candidateBatch: (ids: readonly string[]) => ["candidates", "batch", ids] as const,
 
   applications: ["applications"] as const,
   applicationList: (filters: ApplicationFilters) => ["applications", "list", filters] as const,
   application: (id: string) => ["applications", "detail", id] as const,
-  /** A total per stage, optionally for one job. */
-  stageCount: (stage: ApplicationStage, jobId?: string) =>
-    ["applications", "count", stage, jobId ?? null] as const,
+  /** Every stage's total, optionally for one job. */
+  stageCounts: (jobId?: string) => ["applications", "count", jobId ?? null] as const,
+  /** Applications received per job, for a sorted list of jobs. */
+  jobIntake: (jobIds: readonly string[]) => ["applications", "intake", jobIds] as const,
   jobApplications: (jobId: string) => ["applications", "job", jobId] as const,
   candidateApplications: (candidateId: string) =>
     ["applications", "candidate", candidateId] as const,
@@ -75,6 +82,8 @@ export const keys = {
     ["applications", "notifications", applicationId] as const,
 
   skills: (search: string) => ["skills", search.trim().toLowerCase()] as const,
+
+  recruiterProfile: ["recruiters", "me"] as const,
 
   /** The admin's team page. */
   team: ["team"] as const,
@@ -106,13 +115,32 @@ export function useJob(id: string) {
   });
 }
 
-/** The workflow's own view: live step while running, final status after. */
-export function useJobPublication(id: string, jobStatus: string) {
-  return useQuery({
-    queryKey: keys.publication(id, jobStatus),
-    queryFn: () => jobsApi.publication(id),
-    refetchInterval: jobStatus === "processing" ? 1000 : false,
+/**
+ * The workflow's own view: live step while running, final status after. Polled while
+ * the job is processing, and while any run is still going — a re-analysis of a live
+ * job leaves it "published" throughout, so the job's status alone would never poll.
+ * When the publication shows a newer analysis or failure than the job in hand, the job
+ * is re-read too, so its stale-analysis notice clears or appears without a reload.
+ */
+export function useJobPublication(
+  job: Pick<Job, "id" | "status" | "content_processed_at" | "publish_error">,
+) {
+  const client = useQueryClient();
+  const query = useQuery({
+    queryKey: keys.publication(job.id, job.status),
+    queryFn: () => jobsApi.publication(job.id),
+    refetchInterval: (current) =>
+      job.status === "processing" || current.state.data?.workflow?.status === "running" ? 1000 : false,
   });
+  const latest = query.data;
+  const jobBehind =
+    latest !== undefined &&
+    latest.job_status === job.status &&
+    (latest.content_processed_at !== job.content_processed_at || latest.publish_error !== job.publish_error);
+  useEffect(() => {
+    if (jobBehind) void client.invalidateQueries({ queryKey: keys.job(job.id), exact: true });
+  }, [jobBehind, client, job.id]);
+  return query;
 }
 
 /** Keyed by processed_at, so the panel refetches exactly when a run finishes. */
@@ -162,30 +190,46 @@ export function useDeleteJob() {
   });
 }
 
-/** Totals per job status, for counts on tabs and dashboards: one `limit=1` request per
- * status, reading only `total`. Recruiters only — a candidate's list is published jobs. */
+/**
+ * Totals keyed by enum value, for counts on tabs and dashboards. Every value is a key,
+ * `undefined` until the answer arrives, so callers can tell "not loaded" from 0.
+ */
+function countsSummary<K extends string>(
+  values: readonly K[],
+  query: { data: Partial<Record<K, number>> | undefined; isLoading: boolean; isError: boolean },
+) {
+  const { data } = query;
+  return {
+    counts: Object.fromEntries(values.map((value) => [value, data?.[value]])) as Record<
+      K,
+      number | undefined
+    >,
+    total: values.reduce((sum, value) => sum + (data?.[value] ?? 0), 0),
+    isLoading: query.isLoading,
+    isError: query.isError,
+  };
+}
+
+/** Totals per job status, every status in one request. Recruiters only — a candidate's
+ * list is published jobs. */
 export function useJobStatusCounts({ enabled = true }: { enabled?: boolean } = {}) {
-  return useQueries({
-    queries: JOB_STATUSES.map((status) => ({
-      queryKey: keys.jobStatusCount(status),
-      queryFn: () => jobsApi.list({ status, limit: 1 }),
-      enabled,
-    })),
-    combine: (results) => ({
-      counts: Object.fromEntries(
-        JOB_STATUSES.map((status, index) => [status, results[index]?.data?.total]),
-      ) as Record<JobStatus, number | undefined>,
-      total: results.reduce((sum, result) => sum + (result.data?.total ?? 0), 0),
-      isLoading: results.some((result) => result.isLoading),
-      isError: results.some((result) => result.isError),
-    }),
+  const query = useQuery({
+    queryKey: keys.jobStatusCounts,
+    queryFn: () => jobsApi.statusCounts(),
+    enabled,
   });
+  const { data, isLoading, isError } = query;
+  return useMemo(
+    () => countsSummary(JOB_STATUSES, { data, isLoading, isError }),
+    [data, isLoading, isError],
+  );
 }
 
 /**
  * Many entities by id, each under its own detail key — so a job fetched here is the
  * same cache entry useJob(id) reads, and vice versa. For lists of applications that
- * need job titles or candidate names: pass the ids on the current page.
+ * need job titles: pass the ids on the current page. (Candidates have a batch endpoint;
+ * see useCandidatesByIds.)
  *
  * Ids the caller may not read (a candidate asking for a closed job, say) are simply
  * absent from the map; render a fallback for them.
@@ -249,9 +293,60 @@ export function useCandidate(id: string, { enabled = true }: { enabled?: boolean
   });
 }
 
-/** See useEntitiesByIds: shares the cache with useCandidate. Recruiters only. */
+/** Splits `items` into runs of at most `size`. */
+function chunked<T>(items: readonly T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let start = 0; start < items.length; start += size) {
+    chunks.push(items.slice(start, start + size));
+  }
+  return chunks;
+}
+
+/**
+ * Many candidates by id — the applicants on a board or a page of the queue — in one
+ * `GET /candidates?ids=…` per hundred rather than one request each. Every profile read
+ * is also written to its own detail key, so a drawer or page opened next reads
+ * useCandidate's cache instead of asking again. Recruiters only.
+ */
 export function useCandidatesByIds(ids: readonly string[]) {
-  return useEntitiesByIds<Candidate>(ids, keys.candidate, candidatesApi.get);
+  const client = useQueryClient();
+  const signature = [...new Set(ids)].filter(Boolean).sort().join(",");
+  const batches = useMemo(
+    () => (signature ? chunked(signature.split(","), MAX_IDS_PER_REQUEST) : []),
+    [signature],
+  );
+  const { data, isLoading } = useQueries({
+    queries: batches.map((batch) => ({
+      queryKey: keys.candidateBatch(batch),
+      queryFn: async () => {
+        const page = await candidatesApi.list({ ids: batch, limit: batch.length });
+        for (const candidate of page.items) client.setQueryData(keys.candidate(candidate.id), candidate);
+        return page.items;
+      },
+      staleTime: 60_000,
+    })),
+    combine: combineData<Candidate[]>,
+  });
+  const byId = useMemo(() => {
+    const map = new Map<string, Candidate>();
+    for (const batch of data) {
+      for (const candidate of batch ?? []) map.set(candidate.id, candidate);
+    }
+    return map;
+  }, [data]);
+  return { byId, isLoading };
+}
+
+/**
+ * Invalidates everything under `prefix` except the entry just written from the
+ * server's answer — refetching that one at once would only fetch what is already there.
+ */
+export function invalidateAllBut(client: QueryClient, prefix: QueryKey, written: QueryKey) {
+  const skip = hashKey(written);
+  return client.invalidateQueries({
+    queryKey: prefix,
+    predicate: (query) => query.queryHash !== skip,
+  });
 }
 
 /** A candidate editing their own profile. The answer is the new profile, so it goes
@@ -262,12 +357,36 @@ export function useUpdateCandidate(id: string) {
     mutationFn: (payload: CandidateUpdate) => candidatesApi.update(id, payload),
     onSuccess: (candidate) => {
       client.setQueryData(keys.candidate(id), candidate);
-      client.invalidateQueries({ queryKey: keys.candidates });
+      void invalidateAllBut(client, keys.candidates, keys.candidate(id));
     },
   });
 }
 
 // --- Account ---------------------------------------------------------------------
+
+/** The signed-in recruiter's own profile — their name and title. Staff only: a
+ * candidate's profile is useCandidate(user.id). */
+export function useRecruiterProfile({ enabled = true }: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: keys.recruiterProfile,
+    queryFn: () => recruitersApi.me(),
+    enabled,
+    // Only its owner changes it, and the update below writes the answer back.
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useUpdateRecruiterProfile() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: RecruiterUpdate) => recruitersApi.updateMe(payload),
+    onSuccess: (profile) => {
+      client.setQueryData(keys.recruiterProfile, profile);
+      // The admin's team page lists names too.
+      void client.invalidateQueries({ queryKey: keys.team });
+    },
+  });
+}
 
 /** The API ends every session, this tab's included, and answers with a new pair:
  * stored at once, so the next request is signed with it and the old refresh token,
@@ -364,27 +483,22 @@ export function useApplication(id: string) {
   });
 }
 
-/** Totals per stage — a funnel — from one `limit=1` request per stage, optionally for
- * one job. Recruiters count every application; a candidate, only their own. */
+/** Totals per stage — a funnel, or tab badges — every stage in one request, across all
+ * jobs or for one. Recruiters only. */
 export function useStageCounts({
   jobId,
   enabled = true,
 }: { jobId?: string; enabled?: boolean } = {}) {
-  return useQueries({
-    queries: APPLICATION_STAGES.map((stage) => ({
-      queryKey: keys.stageCount(stage, jobId),
-      queryFn: () => applicationsApi.list({ stage, job_id: jobId, limit: 1 }),
-      enabled,
-    })),
-    combine: (results) => ({
-      counts: Object.fromEntries(
-        APPLICATION_STAGES.map((stage, index) => [stage, results[index]?.data?.total]),
-      ) as Record<ApplicationStage, number | undefined>,
-      total: results.reduce((sum, result) => sum + (result.data?.total ?? 0), 0),
-      isLoading: results.some((result) => result.isLoading),
-      isError: results.some((result) => result.isError),
-    }),
+  const query = useQuery({
+    queryKey: keys.stageCounts(jobId),
+    queryFn: () => applicationsApi.stageCounts(jobId),
+    enabled,
   });
+  const { data, isLoading, isError } = query;
+  return useMemo(
+    () => countsSummary(APPLICATION_STAGES, { data, isLoading, isError }),
+    [data, isLoading, isError],
+  );
 }
 
 /** A recruiter's view of one candidate's applications. Candidates read their own
@@ -457,15 +571,30 @@ export function useProcessApplications() {
 
 /** `note` is optional and recruiter-only: it is kept in the stage history, which
  * candidates read without notes. */
-export function useAdvanceStage() {
+export interface AdvanceVariables {
+  id: string;
+  stage: ApplicationStage;
+  note?: string;
+  /** Who is being moved, for a message about it — not sent to the server. */
+  candidateName?: string;
+}
+
+/**
+ * `onError` here, at the hook level, runs even if the component that asked has since
+ * unmounted — unlike a callback passed to `mutate`, which React Query skips then. For a
+ * refusal that must be heard whatever the user did meanwhile.
+ */
+export function useAdvanceStage({
+  onError,
+}: { onError?: (error: unknown, variables: AdvanceVariables) => void } = {}) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, stage, note }: { id: string; stage: ApplicationStage; note?: string }) =>
-      applicationsApi.advance(id, stage, note),
+    mutationFn: ({ id, stage, note }: AdvanceVariables) => applicationsApi.advance(id, stage, note),
     onSuccess: (application: Application) => {
       client.setQueryData(keys.application(application.id), application);
-      client.invalidateQueries({ queryKey: keys.applications });
+      void invalidateAllBut(client, keys.applications, keys.application(application.id));
     },
+    onError,
   });
 }
 

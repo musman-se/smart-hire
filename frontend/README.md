@@ -88,7 +88,9 @@ polling needs nothing new on the server. Push becomes worth it with Module 3's e
 answer has come back*, so pressing Submit again after a timeout resends the same key and
 the backend replays its first answer instead of acting twice. Once the server answers —
 success or refusal — the key is renewed: reusing it after a refusal would replay that
-refusal for a day, even after its cause was fixed. Network errors and 5xx keep the key.
+refusal for a day, even after its cause was fixed. Network errors and 5xx keep the key,
+and so does a 409 `idempotency_in_progress` (the first attempt is still running): only
+the same key can get its outcome, where a new one would act a second time.
 Outside a secure context (plain HTTP from another machine) `crypto.randomUUID` does not
 exist, and the key is built from `crypto.getRandomValues` instead.
 
@@ -162,6 +164,18 @@ the command palette) are tested through what a user does with them.
 **Node version.** Vite is pinned to 6.x because this machine runs Node 22.11.0, and Vite
 7+ requires 20.19+ or 22.12+. On Node 22.12 or newer, Vite can move up.
 
+**nginx: caching and headers.** `index.html` is served `Cache-Control: no-cache`
+(revalidated on every load, so a deploy is picked up at once) and `/assets/` — hashed
+filenames — `immutable` for a year. Responses are gzipped. Every response carries the
+headers in `nginx/security-headers.conf` (nosniff, `Referrer-Policy: same-origin`, no
+framing, and a Content-Security-Policy that allows only this origin plus the inline
+theme script in `index.html`, by hash). nginx drops inherited `add_header`s in a
+location that sets its own, so the file is included at server level *and* in each such
+location. Changing that inline script means changing its hash in the policy;
+`src/test/csp.test.ts` fails until you do and prints the new values. A tab left open
+across a deploy that asks for a chunk that no longer exists reloads itself once to fetch
+the new build (`src/lib/chunkReload.ts`).
+
 **nginx and recreated containers.** The proxy target in `nginx.conf.template` is a
 variable resolved through Docker's DNS at request time. A literal hostname is resolved
 once at startup, so recreating the `api` container (new IP) used to break `/api` with
@@ -179,14 +193,16 @@ Node 22.12+ with npm 11.
 
 ## Authentication
 
-Everything except `/login` and `/register` sits behind `RequireAuth`. Candidates create
-their own accounts at `/register`; recruiter accounts come from the backend's CLI (the
-seed creates one — see the root README).
+Everything except `/login`, `/register` and `/invite` sits behind `RequireAuth`.
+Candidates create their own accounts at `/register`. Recruiters are invited by an admin
+from the Team page and set their password at `/invite` (the token rides in the URL
+fragment, which browsers never send to a server); the first admin comes from the
+backend's CLI (the seed creates one — see the root README).
 
 | Piece | Does |
 |---|---|
-| `auth/session.ts` | Holds the tokens in memory; parks the refresh token in sessionStorage across a reload |
-| `api/client.ts` | Sends `Authorization: Bearer`; on a 401, exchanges the refresh token once and retries. Signs out only when the server *refuses* the refresh — not when it is unreachable |
+| `auth/session.ts` | Holds the tokens in memory; parks the refresh token in sessionStorage across a reload — for seconds, not across a closed tab |
+| `api/client.ts` | Sends `Authorization: Bearer`; on a 401, exchanges the refresh token once and retries. Signs out when the server *refuses* the refresh (any 4xx but 408/429) — not when it is unreachable, unless that has lasted too long to try the token again safely |
 | `auth/AuthProvider.tsx` | Who is signed in; restores the session on reload; clears the query cache on sign-out |
 | `auth/RequireAuth.tsx` | Redirects to `/login`, remembering the page — except after the sign-out button, when the next person may be someone else |
 
@@ -196,8 +212,12 @@ withdraws their own applications under *My applications*. The role only decides 
 **shown**; the server decides what is **allowed**, and refuses the rest.
 
 **Where the refresh token lives.** In memory while the tab is open. On `pagehide` it is
-parked in sessionStorage, and the next page load takes it back out and deletes it — so
-a reload keeps you signed in. The care is about two tabs: each refresh token works
+parked in sessionStorage with the time, and the next page load takes it back out and
+deletes it — so a reload keeps you signed in. Only if it was parked in the last 10
+seconds, though: `pagehide` fires on tab close too, and a browser restoring closed tabs
+(Ctrl+Shift+T, "continue where you left off") brings sessionStorage back with them — on
+a shared computer, to the next person. A page restored from the back/forward cache, which
+only an open tab has, may take a token parked up to 30 minutes ago. The care is about two tabs: each refresh token works
 once; the server refuses a second use, and after a few seconds treats it as theft and
 ends every session the user has.
 localStorage is shared by every tab, so tabs would race to use one token; and "Duplicate
@@ -209,7 +229,13 @@ If a refresh gets no answer (a deploy, a network blip), the console tries again 
 and 3 seconds — inside the server's 10-second grace window, so if the unanswered attempt
 did rotate the token, the retry is merely refused rather than taken for theft. If there
 is still no answer, it says so and offers a retry instead of the sign-in form: usually
-the token is still good. A page restored from the back/forward cache re-establishes its
+the token is still good. Once 8 seconds have passed since the first unanswered attempt,
+the token is never presented automatically again — a later 401 (a poll, say) signs the
+tab out locally instead, and so does sign-out skip ending it on the server. Only the
+person's own "Try again" may present it once more. Every answer is applied
+compare-and-set: if the session moved on meanwhile (a password change stored a new
+pair, or a sign-out), the answer about the old token changes nothing, and a pair issued
+for a token nobody holds any more is ended at once. A page restored from the back/forward cache re-establishes its
 session from the parked token, with an empty cache — it may belong to someone else.
 
 The cost: a script injected into the page could read the token. React escapes

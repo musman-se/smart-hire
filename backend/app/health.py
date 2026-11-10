@@ -18,6 +18,8 @@ with a 200 — taking the whole API out of rotation for it would turn a partial 
 into a full one.
 """
 
+import asyncio
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -34,9 +36,20 @@ async def liveness() -> dict[str, str]:
     return {"status": "ok"}
 
 
+# The database gets the same short leash as the other checks. Without it, a busy API
+# whose pool is exhausted waited DB_POOL_TIMEOUT_SECONDS (30) here, and the probe timed
+# out instead of answering.
+DATABASE_CHECK_SECONDS = 2.0
+
+
 @router.get("/health/ready", summary="Readiness probe")
 async def readiness(session: SessionDep) -> JSONResponse:
     try:
+        # Only the wait for a connection is timed out. Cancelling that is safe; cancelling
+        # a query midway could leave its connection half-spoken and break the session's
+        # teardown. SELECT 1 on a connection in hand answers at once.
+        async with asyncio.timeout(DATABASE_CHECK_SECONDS):
+            await session.connection()
         await session.execute(text("SELECT 1"))
     except Exception as exc:  # noqa: BLE001 - any failure to answer is "not ready"
         # Broad on purpose. A refused login, "the database system is starting up", a
@@ -51,8 +64,8 @@ async def readiness(session: SessionDep) -> JSONResponse:
             },
         )
 
-    temporal_ok = await temporal_is_reachable()
-    redis_ok = await redis_is_reachable()
+    # Independent, so asked at the same time: the probe takes the slower of the two.
+    temporal_ok, redis_ok = await asyncio.gather(temporal_is_reachable(), redis_is_reachable())
     return JSONResponse(
         status_code=200,
         content={

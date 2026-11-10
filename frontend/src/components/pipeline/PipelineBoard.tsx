@@ -18,7 +18,8 @@ export interface PipelineBoardProps {
   candidatesById: ReadonlyMap<string, Candidate>;
   showClosed: boolean;
   onShowClosedChange: (open: boolean) => void;
-  pendingId: string | undefined;
+  /** Applications whose move is in flight. */
+  pendingIds: ReadonlySet<string>;
   onOpen: (application: Application) => void;
   onRequestMove: (application: Application, stage: ApplicationStage) => void;
 }
@@ -46,7 +47,7 @@ export function PipelineBoard({
   candidatesById,
   showClosed,
   onShowClosedChange,
-  pendingId,
+  pendingIds,
   onOpen,
   onRequestMove,
 }: PipelineBoardProps) {
@@ -167,7 +168,7 @@ export function PipelineBoard({
                         application={application}
                         candidate={candidatesById.get(application.candidate_id)}
                         job={job}
-                        pending={pendingId === application.id}
+                        pending={pendingIds.has(application.id)}
                         dragging={dragged?.id === application.id}
                         onOpen={onOpen}
                         onRequestMove={onRequestMove}

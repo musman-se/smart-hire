@@ -49,7 +49,7 @@ function renderBoard(
       candidatesById={candidates}
       showClosed
       onShowClosedChange={vi.fn()}
-      pendingId={undefined}
+      pendingIds={new Set()}
       onOpen={onOpen}
       onRequestMove={onRequestMove}
     />,

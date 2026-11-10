@@ -19,7 +19,7 @@ const PROCESSING_POLL_MS = 2000;
  * The number of `processing` jobs is watched too, across every status, because the
  * page alone cannot see every publish settle: a job published from the Draft tab
  * leaves that list at once. When that number falls, a job has moved tabs, so the
- * per-status counts and the lists behind the other tabs are refreshed.
+ * lists behind the other tabs are refreshed.
  */
 export function useLiveJobs(filters: JobFilters) {
   const client = useQueryClient();
@@ -34,18 +34,19 @@ export function useLiveJobs(filters: JobFilters) {
   });
 
   // The same cache entry the status tabs read (useJobStatusCounts), so polling it
-  // also keeps the Processing tab's count current.
-  const inFlight = useQuery({
-    queryKey: keys.jobStatusCount("processing"),
-    queryFn: () => jobsApi.list({ status: "processing", limit: 1 }),
-    refetchInterval: (current) => (current.state.data?.total ? PROCESSING_POLL_MS : false),
+  // keeps every tab's count current as well.
+  const counts = useQuery({
+    queryKey: keys.jobStatusCounts,
+    queryFn: () => jobsApi.statusCounts(),
+    refetchInterval: (current) => (current.state.data?.processing ? PROCESSING_POLL_MS : false),
   });
 
-  const processing = inFlight.data?.total;
+  const processing = counts.data?.processing;
   const previous = useRef(processing);
   useEffect(() => {
+    // The counts are fresh already — this poll read them. The lists behind the tabs
+    // are what still show the job where it was.
     if (processing !== undefined && previous.current !== undefined && processing < previous.current) {
-      void client.invalidateQueries({ queryKey: [...keys.jobs, "count"] });
       void client.invalidateQueries({ queryKey: [...keys.jobs, "list"] });
     }
     previous.current = processing;

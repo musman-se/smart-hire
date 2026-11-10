@@ -124,3 +124,25 @@ describe("previewCandidate", () => {
     expect(withLink(" https://example.com/cv.pdf ")).toBe("https://example.com/cv.pdf");
   });
 });
+
+describe("validateProfile — counted as the server counts", () => {
+  it("counts an emoji as one character, and refuses a name of spaces", () => {
+    const emojiName = "\u{1F600}".repeat(LIMITS.fullNameMax);
+    expect(validateProfile({ ...baseline, full_name: emojiName }).full_name).toBeUndefined();
+    expect(validateProfile({ ...baseline, full_name: "    " }).full_name).toBeDefined();
+  });
+
+  it("caps the skill list at the server's limit", () => {
+    const skills = Array.from({ length: LIMITS.skillsMax + 1 }, (_, i) => `skill-${i}`);
+    expect(validateProfile({ ...baseline, skills }).skills).toMatch(/at most 50 skills/);
+    expect(validateProfile({ ...baseline, skills: skills.slice(1) }).skills).toBeUndefined();
+  });
+});
+
+describe("isHttpUrl — the backend's rule", () => {
+  it("needs a host, and never accepts another scheme", () => {
+    expect(isHttpUrl("http://")).toBe(false);
+    expect(isHttpUrl("data:text/html,hi")).toBe(false);
+    expect(isHttpUrl(" https://example.com/cv.pdf ")).toBe(true);
+  });
+});

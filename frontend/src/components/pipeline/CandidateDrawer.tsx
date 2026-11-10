@@ -41,7 +41,8 @@ import {
   useToast,
   type TimelineItem,
 } from "../ui";
-import { recruiterTargets } from "../applications/stages";
+import { recruiterTargets, stageEventIcon, stageEventTone } from "../applications/stages";
+import { isHttpUrl } from "../profile/profileForm";
 import { applicantName, moveLabel } from "./model";
 import { explainScore, scoreIsStale, scoreVerdict } from "./scoreExplain";
 
@@ -76,7 +77,13 @@ export function CandidateDrawer({
   // An empty id disables the query: only fetch what the list could not provide.
   const fetched = useApplication(listed ? "" : applicationId);
   const application = listed ?? fetched.data;
-  const { data: candidate } = useCandidate(application?.candidate_id ?? "");
+  const {
+    data: candidate,
+    error: candidateError,
+    refetch: refetchCandidate,
+  } = useCandidate(application?.candidate_id ?? "");
+  // Without the profile, its skeletons would wait for ever: say why, offer a retry.
+  const candidateFailed = !candidate && Boolean(candidateError);
 
   const name = application ? applicantName(candidate) : "Applicant";
 
@@ -85,7 +92,7 @@ export function CandidateDrawer({
       open={Boolean(applicationId)}
       onClose={onClose}
       size="lg"
-      title={candidate ? name : <Skeleton width="10rem" height="1.25rem" />}
+      title={candidate ? name : candidateFailed ? "Applicant" : <Skeleton width="10rem" height="1.25rem" />}
       description={
         <>
           {candidate?.headline}
@@ -121,7 +128,11 @@ export function CandidateDrawer({
         <SkeletonText lines={8} />
       ) : (
         <div className="pipeline-drawer">
-          <ProfileSection application={application} candidate={candidate} />
+          {candidateFailed ? (
+            <ErrorNotice error={candidateError} onRetry={() => void refetchCandidate()} />
+          ) : (
+            <ProfileSection application={application} candidate={candidate} />
+          )}
           <StageSection application={application} name={name} onRequestMove={onRequestMove} />
           <MatchSection application={application} candidate={candidate} job={job} />
           <CoverLetterSection application={application} />
@@ -211,9 +222,14 @@ function ProfileSection({ application, candidate }: { application: Application; 
               <Icon name="file-text" label="Resume" />
             </dt>
             <dd>
-              <a href={candidate.resume_url} target="_blank" rel="noreferrer" className="row">
-                Resume <Icon name="external-link" size={12} />
-              </a>
+              {/* Only a web link becomes one: a stored "javascript:" would run on click. */}
+              {isHttpUrl(candidate.resume_url) ? (
+                <a href={candidate.resume_url} target="_blank" rel="noopener noreferrer" className="row">
+                  Resume <Icon name="external-link" size={12} />
+                </a>
+              ) : (
+                <span className="truncate">{candidate.resume_url}</span>
+              )}
             </dd>
           </div>
         )}
@@ -389,13 +405,8 @@ function ActivitySection({ application }: { application: Application }) {
 
   const historyItems: TimelineItem[] = [...(history.data ?? [])].reverse().map((change, index) => ({
     id: `${change.changed_at}-${index}`,
-    icon: change.from_stage === null ? "send" : change.to_stage === "rejected" ? "x-circle" : "arrow-right",
-    tone:
-      change.to_stage === "hired"
-        ? "success"
-        : change.to_stage === "rejected" || change.to_stage === "withdrawn"
-          ? "danger"
-          : "accent",
+    icon: stageEventIcon(change.from_stage, change.to_stage),
+    tone: stageEventTone(change.to_stage),
     title: change.from_stage === null ? "Applied" : `${humanize(change.from_stage)} → ${humanize(change.to_stage)}`,
     meta: <time title={formatDateTime(change.changed_at)}>{formatRelative(change.changed_at)}</time>,
     body: change.note ? <q className="pipeline-note">{change.note}</q> : undefined,

@@ -17,6 +17,7 @@ from app.candidates import router as candidates
 from app.core.config import settings
 from app.core.db import engine
 from app.core.errors import register_exception_handlers
+from app.core.limits import BodySizeLimitMiddleware
 from app.core.logging import RequestContextMiddleware, configure_logging
 from app.core.redis import close_redis
 from app.core.schemas import ErrorResponse
@@ -64,6 +65,9 @@ app = FastAPI(
     },
 )
 
+# Added first, so it runs inside RequestContextMiddleware: a refused body still gets
+# a request id.
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)
 app.add_middleware(RequestContextMiddleware)
 register_exception_handlers(app)
 

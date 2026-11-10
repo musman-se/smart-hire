@@ -70,10 +70,14 @@ class RequestContextMiddleware:
         request_id = decoded if _VALID_INCOMING_ID.fullmatch(decoded) else uuid.uuid4().hex
         _request_id.set(request_id)
 
+        header = REQUEST_ID_HEADER.lower().encode()
+
         async def send_with_id(message: Message) -> None:
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers") or [])
-                headers.append((REQUEST_ID_HEADER.encode(), request_id.encode()))
+                # Error responses already carry it (core.errors); once is enough.
+                if not any(name.lower() == header for name, _ in headers):
+                    headers.append((REQUEST_ID_HEADER.encode(), request_id.encode()))
                 message["headers"] = headers
             await send(message)
 

@@ -38,11 +38,15 @@ import {
 /** Below this width the sidebar becomes a drawer. Mirrors the 900px in layout.css. */
 const MOBILE_QUERY = "(max-width: 900px)";
 
+/** The dependencies /health/ready reports on, in the order the badge names them. */
+const DEPENDENCIES = ["database", "temporal", "redis"] as const;
+
 /**
  * Surfaces /health/ready in the header — for recruiters only. Degraded (Temporal or
  * Redis down) holds up publishing, which only recruiters do; candidates' reads and
  * applications keep working, so to them it would be alarming noise. They get
- * ConnectionNotice instead.
+ * ConnectionNotice instead. With the database down the API answers 503, but it still
+ * answers: that reads as degraded, naming the database, not as unreachable.
  *
  * Readiness rather than liveness: the question is "can this thing serve me", and that
  * includes its dependencies. It polls every 15 seconds.
@@ -51,23 +55,18 @@ function HealthBadge() {
   const { data, isError, isLoading } = useReadiness();
 
   const unreachable = data
-    ? (["temporal", "redis"] as const).filter((name) => data[name] === "unreachable")
+    ? DEPENDENCIES.filter((name) => data[name] === "unreachable")
     : [];
-  const state = isLoading ? "" : isError ? "down" : unreachable.length > 0 ? "degraded" : "up";
+  const degraded = data?.status === "degraded" || unreachable.length > 0;
+  const state = isLoading ? "" : isError ? "down" : degraded ? "degraded" : "up";
   const label = isLoading
     ? "Checking API…"
     : isError
       ? "API unreachable"
-      : unreachable.length > 0
-        ? `API degraded · ${unreachable.join(", ")} down`
+      : degraded
+        ? `API degraded${unreachable.length > 0 ? ` · ${unreachable.join(", ")} down` : ""}`
         : "API ready · db · temporal · redis";
-  const short = isLoading
-    ? "Checking"
-    : isError
-      ? "Offline"
-      : unreachable.length > 0
-        ? "Degraded"
-        : "Online";
+  const short = isLoading ? "Checking" : isError ? "Offline" : degraded ? "Degraded" : "Online";
 
   return (
     <Tooltip content={label} side="bottom">
@@ -83,14 +82,16 @@ function HealthBadge() {
 }
 
 /**
- * The candidate's side of the health check: silent unless the API cannot be reached
- * at all, and then in plain words. It shares HealthBadge's query, so it costs nothing.
+ * The candidate's side of the health check: silent unless the API cannot serve them —
+ * unreachable, or its database down — and then in plain words. It shares HealthBadge's
+ * query, so it costs nothing.
  */
 function ConnectionNotice() {
-  const { isError } = useReadiness();
+  const { data, isError } = useReadiness();
+  const down = isError || data?.database === "unreachable";
   return (
     <div role="status">
-      {isError && (
+      {down && (
         <p className="connection-notice">
           <Icon name="alert-circle" size={16} />
           We're having trouble connecting. Your changes may not save.

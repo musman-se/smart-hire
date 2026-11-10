@@ -58,6 +58,10 @@ class Skill(Base):
         # "Python" or " python" from any other writer too, so the unique constraint on
         # name really does mean one row per skill.
         CheckConstraint("name = lower(btrim(name)) AND name <> ''", name="name_normalised"),
+        # The skill picker's prefix search, name LIKE 'py%'. The unique index cannot
+        # serve it under the database's en_US collation; a text_pattern_ops index
+        # compares byte by byte, which is what a prefix match needs.
+        Index("ix_skills_name_pattern", "name", postgresql_ops={"name": "text_pattern_ops"}),
     )
 
     def __repr__(self) -> str:

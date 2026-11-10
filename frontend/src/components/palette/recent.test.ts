@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  clearAllRecentItems,
   forgetItem,
   isRecentItem,
   recentPath,
+  recentStorageKey,
   rememberItem,
   type RecentItem,
 } from "./recent";
@@ -63,5 +65,19 @@ describe("recentPath", () => {
   it("links to the detail page for the kind", () => {
     expect(recentPath({ kind: "job", id: "a" })).toBe("/jobs/a");
     expect(recentPath({ kind: "candidate", id: "b" })).toBe("/candidates/b");
+  });
+});
+
+describe("clearAllRecentItems", () => {
+  it("removes every account's list from storage, and nothing else", () => {
+    localStorage.setItem(recentStorageKey("u1"), JSON.stringify([job("1")]));
+    localStorage.setItem(recentStorageKey("u2"), JSON.stringify([job("2")]));
+    localStorage.setItem("smarthire.theme", JSON.stringify("dark"));
+
+    clearAllRecentItems();
+
+    expect(localStorage.getItem(recentStorageKey("u1"))).toBeNull();
+    expect(localStorage.getItem(recentStorageKey("u2"))).toBeNull();
+    expect(localStorage.getItem("smarthire.theme")).toBe(JSON.stringify("dark"));
   });
 });

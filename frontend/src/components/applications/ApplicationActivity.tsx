@@ -12,14 +12,7 @@ import {
   stoppedAt,
   type TimelineItem,
 } from "../ui";
-import { buildActivity, type ActivityEvent } from "./stages";
-
-const STAGE_TONE: Partial<Record<ApplicationStage, TimelineItem["tone"]>> = {
-  hired: "success",
-  offer: "success",
-  rejected: "danger",
-  withdrawn: "warning",
-};
+import { buildActivity, stageEventIcon, stageEventTone, type ActivityEvent } from "./stages";
 
 function toTimelineItem(event: ActivityEvent): TimelineItem {
   const when = (
@@ -43,9 +36,8 @@ function toTimelineItem(event: ActivityEvent): TimelineItem {
   }
   return {
     id: event.id,
-    icon:
-      event.to === "hired" ? "award" : event.to === "rejected" ? "x-circle" : event.from ? "arrow-right" : "send",
-    tone: STAGE_TONE[event.to] ?? "accent",
+    icon: stageEventIcon(event.from ?? null, event.to),
+    tone: stageEventTone(event.to),
     title: event.from ? `Moved to ${humanize(event.to)}` : "Applied",
     meta: event.from ? (
       <>

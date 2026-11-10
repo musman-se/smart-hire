@@ -7,13 +7,16 @@ import { Layout } from "./components/Layout";
 import type { RouteHandle } from "./components/navigation";
 import { RouteErrorPage } from "./components/RouteErrorPage";
 import { PageLoader } from "./components/ui";
+import { loadChunk } from "./lib/chunkReload";
 
 /**
  * Lazy-loads a page that is a named export. Each page becomes its own chunk, so a
- * candidate never downloads the recruiter's pipeline board.
+ * candidate never downloads the recruiter's pipeline board. A chunk that fails to load
+ * — usually a deploy that replaced it while this tab was open — reloads the page once
+ * to fetch the new build (see loadChunk).
  */
 function lazyPage<K extends string>(load: () => Promise<Record<K, ComponentType>>, name: K) {
-  return lazy<ComponentType>(() => load().then((module) => ({ default: module[name] })));
+  return lazy<ComponentType>(() => loadChunk(load).then((module) => ({ default: module[name] })));
 }
 
 const LoginPage = lazyPage(() => import("./pages/LoginPage"), "LoginPage");

@@ -50,6 +50,12 @@ def build_worker(client: Client, task_queue: str, session_factory=SessionLocal) 
         # once. A grace period lets a half-done store_job_content commit instead of
         # being cancelled and waiting out its start-to-close timeout before a retry.
         graceful_shutdown_timeout=timedelta(seconds=settings.worker_shutdown_grace_seconds),
+        # Every activity holds a database connection while it runs. The SDK default of
+        # 100 at once, on a pool of DB_POOL_SIZE + DB_MAX_OVERFLOW (15), left 85 waiting
+        # for a connection — and a wait near the pool timeout outlasts the activity's
+        # own 30 s timeout, so a burst turned into timeouts and retries that added load.
+        # One activity per connection: the rest stay queued in Temporal, not here.
+        max_concurrent_activities=settings.db_pool_size + settings.db_max_overflow,
     )
 
 

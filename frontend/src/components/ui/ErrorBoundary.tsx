@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
+import { isChunkLoadError } from "../../lib/chunkReload";
 import { Button } from "./Button";
 import { Icon } from "./Icon";
 
@@ -40,6 +41,9 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, State> {
     const { error } = this.state;
     if (!error) return this.props.children;
     if (this.props.fallback) return this.props.fallback(error, this.reset);
+    // For a lazy page whose code failed to download, ErrorFallback offers a reload
+    // instead of the reset: React caches the rejected import, so re-rendering the same
+    // page can never recover it.
     return <ErrorFallback error={error} onRetry={this.reset} />;
   }
 }
@@ -55,22 +59,30 @@ export function ErrorFallback({
   title?: string;
 }) {
   const message = error instanceof Error ? error.message : error ? String(error) : null;
+  const staleBuild = isChunkLoadError(error);
   return (
     <div className="card error-fallback" role="alert">
       <span className="error-fallback-icon" aria-hidden="true">
         <Icon name="alert-triangle" size={22} />
       </span>
-      <h2>{title}</h2>
+      <h2>{staleBuild ? "SmartHire has been updated" : title}</h2>
       <p className="muted">
-        This part of the page failed to load. Trying again usually fixes it; if not,
-        reload the page.
+        {staleBuild
+          ? "This page could not load its code — usually because a new version was released while it was open. Reload to get it."
+          : "This part of the page failed to load. Trying again usually fixes it; if not, reload the page."}
       </p>
       {import.meta.env.DEV && message && <pre>{message}</pre>}
       <div className="button-row">
-        {onRetry && (
-          <Button variant="primary" leftIcon="refresh" onClick={onRetry}>
-            Try again
+        {staleBuild ? (
+          <Button variant="primary" leftIcon="refresh" onClick={() => window.location.reload()}>
+            Reload
           </Button>
+        ) : (
+          onRetry && (
+            <Button variant="primary" leftIcon="refresh" onClick={onRetry}>
+              Try again
+            </Button>
+          )
         )}
         <Button variant="ghost" onClick={() => window.location.assign("/")}>
           Go to start

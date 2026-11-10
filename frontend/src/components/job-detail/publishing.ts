@@ -31,7 +31,12 @@ export type StepState = "done" | "current" | "failed" | "upcoming";
  * - `stuck`: the job says processing but no run is in flight — publishing again is the
  *   documented recovery.
  */
-export type PublishOutcome = "idle" | "running" | "completed" | "failed" | "stuck";
+/**
+ * "stale": the job is live, but the last re-analysis of its content failed or never
+ * started (publish_error says which) — candidates can still apply; skills and keywords
+ * describe the old text until the analysis is run again.
+ */
+export type PublishOutcome = "idle" | "running" | "completed" | "failed" | "stuck" | "stale";
 
 export interface PublishProgress {
   outcome: PublishOutcome;
@@ -67,6 +72,7 @@ export function publishProgress(
   jobStatus: JobStatus,
   run: RunSummary | null | undefined,
   recentChange?: { jobUpdatedAt: string; now: number },
+  publishError?: string | null,
 ): PublishProgress {
   if (jobStatus === "processing" && newRunStarting(run, recentChange)) {
     return {
@@ -87,6 +93,15 @@ export function publishProgress(
   }
   if (jobStatus === "processing") {
     return { outcome: "stuck", steps: withStates(() => "upcoming") };
+  }
+  // A live job whose content refresh failed (its run is not "completed") or could not
+  // start (publish_error set, the last run the old, completed one). Not "failed": the
+  // job never went offline.
+  if (jobStatus === "published" && (publishError || (run && run.status !== "completed"))) {
+    return {
+      outcome: "stale",
+      steps: withStates((i) => (i < index ? "done" : i === index ? "failed" : "upcoming")),
+    };
   }
   if (jobStatus === "publish_failed" || (run && run.status !== "completed")) {
     // A failed run reports "failed" as its step, so which step broke is often unknown:

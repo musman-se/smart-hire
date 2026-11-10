@@ -520,7 +520,7 @@ other operation in the OpenAPI document.
 
 | | Admin | Recruiter | Candidate |
 |---|---|---|---|
-| Jobs | as a recruiter | everything | read published jobs, and closed ones they applied to |
+| Jobs | as a recruiter | everything | read published jobs, and closed ones they applied to (a job reopened as a draft is hidden again, applicants included, until it is republished) |
 | Publishing status, extracted content | yes | yes | — |
 | Candidates | as a recruiter | read all | read, edit, delete their own |
 | Own staff profile (`/recruiters/me`) | read and edit | read and edit | — |

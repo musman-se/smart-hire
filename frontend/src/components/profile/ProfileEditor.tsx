@@ -206,10 +206,11 @@ export function ProfileEditor({ candidate }: { candidate: Candidate }) {
                 ? `Add at least ${MIN_SKILLS}. Press Enter or a comma after each one.`
                 : "Press Enter or a comma after each one. Suggestions come from skills roles ask for."
             }
-            labelAside={<span className="tabular">{values.skills.length}</span>}
+            labelAside={<span className="tabular">{values.skills.length} / {LIMITS.skillsMax}</span>}
           >
             <TagInput
               value={values.skills}
+              maxTags={LIMITS.skillsMax}
               onChange={(skills) => {
                 set("skills", skills);
                 touch("skills")();

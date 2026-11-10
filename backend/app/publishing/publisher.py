@@ -18,7 +18,11 @@ from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from temporalio.service import RPCError, RPCStatusCode
 
 from app.core.config import settings
-from app.core.temporal import WorkflowUnavailableError, get_temporal_client
+from app.core.temporal import (
+    WorkflowStartUnknownError,
+    WorkflowUnavailableError,
+    get_temporal_client,
+)
 from app.publishing.workflow import PublishJobInput, PublishJobWorkflow
 
 logger = logging.getLogger(__name__)
@@ -46,8 +50,11 @@ class WorkflowRun:
 
 
 class JobPublisher(Protocol):
-    async def start(self, job_id: uuid.UUID) -> None:
-        """Start a publishing run for this job, replacing any run still in flight."""
+    async def start(self, job_id: uuid.UUID, *, refresh: bool = False) -> None:
+        """Start a publishing run for this job, replacing any run still in flight.
+
+        refresh: the job is already live and only its analysis is re-run, so a failure
+        leaves it published (with publish_error) instead of putting it back to draft."""
 
     async def describe(self, job_id: uuid.UUID) -> WorkflowRun | None:
         """The latest run for this job, or None if there has never been one."""
@@ -57,11 +64,15 @@ class TemporalJobPublisher:
     def __init__(self, client: Client) -> None:
         self._client = client
 
-    async def start(self, job_id: uuid.UUID) -> None:
+    async def start(self, job_id: uuid.UUID, *, refresh: bool = False) -> None:
         try:
             await self._client.start_workflow(
                 PublishJobWorkflow.run,
-                PublishJobInput(job_id=str(job_id), max_attempts=settings.publishing_max_attempts),
+                PublishJobInput(
+                    job_id=str(job_id),
+                    max_attempts=settings.publishing_max_attempts,
+                    refresh=refresh,
+                ),
                 id=workflow_id_for(job_id),
                 task_queue=settings.temporal_task_queue,
                 # A run already in flight is replaced: the newest request wins. Attaching
@@ -79,8 +90,15 @@ class TemporalJobPublisher:
                 # activities have their own timeouts; they bound the actual work.
                 rpc_timeout=RPC_TIMEOUT,
             )
-        except (RPCError, RuntimeError) as exc:
-            # RuntimeError is what the lazy client raises when it cannot connect at all.
+        except RPCError as exc:
+            logger.warning("publish_start_failed job=%s error=%s", job_id, exc)
+            # A deadline means the request may have reached the server and been carried
+            # out: the answer is unknown, not "no".
+            if exc.status == RPCStatusCode.DEADLINE_EXCEEDED:
+                raise WorkflowStartUnknownError() from exc
+            raise WorkflowUnavailableError() from exc
+        except RuntimeError as exc:
+            # What the lazy client raises when it cannot connect at all: nothing started.
             logger.warning("publish_start_failed job=%s error=%s", job_id, exc)
             raise WorkflowUnavailableError() from exc
         logger.info("publish_started job=%s", job_id)

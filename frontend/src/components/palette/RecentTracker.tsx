@@ -71,9 +71,10 @@ function TrackJob(props: TrackProps) {
 
 function TrackCandidate(props: TrackProps) {
   const { data: candidate, error } = useCandidate(props.id);
+  // Never the email: this is written to localStorage (see recent.ts).
   const found = candidate && {
     title: candidate.full_name,
-    subtitle: candidate.headline || candidate.email,
+    subtitle: candidate.headline || undefined,
   };
   useTrack("candidate", props, found, error);
   return null;

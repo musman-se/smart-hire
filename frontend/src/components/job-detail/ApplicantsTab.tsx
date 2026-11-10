@@ -24,7 +24,7 @@ import {
   SearchInput,
   Skeleton,
   StagePill,
-  compareValues,
+  sortRows,
   formatDateTime,
   formatNumber,
   formatRelative,
@@ -90,6 +90,7 @@ export function ApplicantsTab({ job, filters, onFiltersChange, openId, onOpenCha
         (!filters.stage || a.stage === filters.stage) &&
         matchesFilters(a, candidatesById.get(a.candidate_id), { search: filters.q, minScore: 0 }),
     );
+    // DataTable's own ordering, so the drawer's previous/next follow the rows on screen.
     return sortRows(shown, columns, sort);
   }, [items, candidatesById, filters.stage, filters.q, columns, sort]);
 
@@ -149,7 +150,7 @@ export function ApplicantsTab({ job, filters, onFiltersChange, openId, onOpenCha
         sort={sort}
         onSortChange={setSort}
         onRowClick={(a) => onOpenChange(a.id)}
-        rowClassName={(a) => (a.id === stageChange.pendingId ? "job-detail-row-pending" : undefined)}
+        rowClassName={(a) => (stageChange.pendingIds.has(a.id) ? "job-detail-row-pending" : undefined)}
         empty={
           <EmptyState
             compact
@@ -221,17 +222,6 @@ function StageChip({
       <span className="job-detail-chip-count tabular">{count ?? "–"}</span>
     </button>
   );
-}
-
-/**
- * The same ordering DataTable applies, so the drawer's previous/next follow the rows on
- * screen. The direction goes to compareValues rather than flipping its result: flipping
- * would also move unscored rows to the top, where the table never shows them.
- */
-function sortRows(rows: Application[], columns: readonly Column<Application>[], sort: SortState | null): Application[] {
-  const sortValue = sort && columns.find((c) => c.key === sort.key)?.sortValue;
-  if (!sort || !sortValue) return rows;
-  return [...rows].sort((a, b) => compareValues(sortValue(a), sortValue(b), sort.direction));
 }
 
 function applicantColumns(

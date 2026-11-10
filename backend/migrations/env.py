@@ -44,13 +44,27 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        # As online: one transaction per revision, so the script matches what an
+        # upgrade really runs (an added enum value must commit before it is used).
+        transaction_per_migration=True,
     )
 
     with context.begin_transaction():
         context.run_migrations()
 
 
+# How long a migration waits for a lock before giving up. migrate runs while the old
+# API is still serving; a DDL statement queued behind a long transaction would make
+# every query on that table queue behind it in turn. Failing fast, and retrying the
+# deploy, is better than a stalled API.
+LOCK_TIMEOUT = "5s"
+
+
 def do_run_migrations(connection: Connection) -> None:
+    # Session-level, so it outlives this statement's transaction — committed at once, so
+    # Alembic starts each revision's transaction on a clean connection.
+    connection.exec_driver_sql(f"SET lock_timeout = '{LOCK_TIMEOUT}'")
+    connection.commit()
     context.configure(
         connection=connection,
         target_metadata=target_metadata,

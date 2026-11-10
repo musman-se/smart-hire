@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import { ApiError } from "../../api/client";
 import { cx } from "../../lib/cx";
+import { Button } from "./Button";
 import { Icon, type IconName } from "./Icon";
 
 export type NoticeTone = "info" | "success" | "warning" | "rule" | "error";
@@ -50,7 +51,7 @@ export function Notice({ tone = "info", title, children, action, className }: No
  * the server's own message, so a new backend error still surfaces usefully instead of
  * vanishing.
  */
-export const RULE_COPY: Record<string, { title: string; rule: boolean }> = {
+export const RULE_COPY: Record<string, { title: string; rule: boolean; message?: string }> = {
   duplicate_application: { title: "Already applied", rule: true },
   not_eligible: { title: "Not eligible for this role", rule: true },
   application_limit_reached: { title: "Application limit reached", rule: true },
@@ -67,7 +68,21 @@ export const RULE_COPY: Record<string, { title: string; rule: boolean }> = {
   invitation_not_allowed: { title: "No invitation needed", rule: true },
   cannot_deactivate_self: { title: "You cannot deactivate your own account", rule: true },
   workflow_unavailable: { title: "The workflow engine is unavailable", rule: false },
-  idempotency_in_progress: { title: "Still processing your first attempt", rule: true },
+  // The server's own message names the header; a person needs to know it is safe to
+  // press the button again (useIdempotencyKey resends the same key).
+  // The run may have started (the job stays "processing"): the advice is to look,
+  // not to assume nothing happened.
+  workflow_start_unknown: {
+    title: "Publishing may have started",
+    rule: true,
+    message:
+      "The workflow engine was slow to answer. Check the job in a moment — if it is still stuck, restart publishing.",
+  },
+  idempotency_in_progress: {
+    title: "Still processing your first attempt",
+    rule: true,
+    message: "Your first attempt is still being saved. Try again in a moment — it will not be done twice.",
+  },
   idempotency_key_reused: { title: "Request changed since the first attempt", rule: false },
   validation_error: { title: "Check the form", rule: false },
   not_found: { title: "Not found", rule: false },
@@ -87,7 +102,7 @@ export function describeError(error: unknown): DescribedError {
     const copy = RULE_COPY[error.code];
     return {
       title: copy?.title ?? "Request failed",
-      message: error.message,
+      message: copy?.message ?? error.message,
       rule: copy?.rule ?? false,
     };
   }
@@ -98,8 +113,17 @@ export function describeError(error: unknown): DescribedError {
   };
 }
 
-/** Renders nothing for a falsy error, so it can sit permanently under a form. */
-export function ErrorNotice({ error, className }: { error: unknown; className?: string }) {
+/** Renders nothing for a falsy error, so it can sit permanently under a form. With
+ * `onRetry`, a failed read offers "Try again" instead of leaving the reader stuck. */
+export function ErrorNotice({
+  error,
+  className,
+  onRetry,
+}: {
+  error: unknown;
+  className?: string;
+  onRetry?: () => void;
+}) {
   if (!error) return null;
   const { title, message, rule } = describeError(error);
   const reference =
@@ -108,7 +132,18 @@ export function ErrorNotice({ error, className }: { error: unknown; className?: 
       : null;
 
   return (
-    <Notice tone={rule ? "rule" : "error"} title={title} className={className}>
+    <Notice
+      tone={rule ? "rule" : "error"}
+      title={title}
+      className={className}
+      action={
+        onRetry && (
+          <Button size="sm" leftIcon="refresh" onClick={onRetry}>
+            Try again
+          </Button>
+        )
+      }
+    >
       {message}
       {reference && (
         <>

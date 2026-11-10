@@ -146,143 +146,150 @@ export function RegisterPage() {
       />
 
       <form className="auth-form" onSubmit={submit} noValidate aria-busy={pending || undefined}>
-        {step === "account" ? (
-          <section className="auth-step-panel" aria-labelledby="register-step-title">
-            <h2 id="register-step-title" className="sr-only">
-              Step 1: your account
-            </h2>
-            <Field label="Full name" id={fieldId("full_name")} error={shown.full_name} required>
-              <Input
-                autoComplete="name"
-                value={draft.full_name}
-                onChange={(event) => update("full_name", event.target.value)}
-                onBlur={touchOnBlur("full_name")}
-                placeholder="Ayesha Khan"
-              />
-            </Field>
-
-            <Field
-              label="Email"
-              id={fieldId("email")}
-              // The notice below says what to do; the field shows which input is at fault.
-              error={shown.email ?? (isDuplicateEmail(error) ? "This email already has an account." : undefined)}
-              hint="You will sign in with it. Hiring teams use it to reach you."
-              required
-            >
-              <Input
-                type="email"
-                inputMode="email"
-                autoComplete="email"
-                autoCapitalize="none"
-                spellCheck={false}
-                value={draft.email}
-                onChange={(event) => update("email", event.target.value)}
-                onBlur={touchOnBlur("email")}
-                placeholder="ayesha@example.com"
-              />
-            </Field>
-
-            <div className="auth-password-field">
-              <Field label="Password" id={fieldId("password")} error={shown.password} required>
-                <PasswordInput
-                  autoComplete="new-password"
-                  value={draft.password}
-                  onChange={(event) => update("password", event.target.value)}
-                  onBlur={touchOnBlur("password")}
+        {/* Once the account exists, what was sent is what it holds: an edit here would
+            change nothing, while "Sign in" retried with the edited email or password
+            would fail for no visible reason. So the fields are locked, and the notice
+            below says where to change them. */}
+        <fieldset className="auth-step-fieldset" disabled={created}>
+          {step === "account" ? (
+            <section className="auth-step-panel" aria-labelledby="register-step-title">
+              <h2 id="register-step-title" className="sr-only">
+                Step 1: your account
+              </h2>
+              <Field label="Full name" id={fieldId("full_name")} error={shown.full_name} required>
+                <Input
+                  autoComplete="name"
+                  value={draft.full_name}
+                  onChange={(event) => update("full_name", event.target.value)}
+                  onBlur={touchOnBlur("full_name")}
+                  placeholder="Ayesha Khan"
                 />
               </Field>
-              <PasswordStrength
-                password={draft.password}
-                context={{ email: draft.email, fullName: draft.full_name }}
-              />
-            </div>
-          </section>
-        ) : (
-          <section className="auth-step-panel" aria-labelledby="register-step-title">
-            <h2 id="register-step-title" className="sr-only">
-              Step 2: your profile
-            </h2>
-            <div className="auth-summary">
-              <Avatar name={draft.full_name || draft.email} size="sm" />
-              <div className="auth-summary-text">
-                <span className="auth-summary-name">{draft.full_name.trim()}</span>
-                <span className="auth-summary-email">{draft.email.trim()}</span>
-              </div>
-              <Button variant="ghost" size="sm" leftIcon="edit" onClick={() => goTo("account")}>
-                Edit<span className="sr-only"> account details</span>
-              </Button>
-            </div>
 
-            <Field
-              label="Headline"
-              id={fieldId("headline")}
-              error={shown.headline}
-              hint="One line that sums up what you do. It tops your profile."
-              labelAside={`${codePointLength(draft.headline.trim())} / ${LIMITS.headlineMax}`}
-              optional
-            >
-              <Input
-                value={draft.headline}
-                onChange={(event) => update("headline", event.target.value)}
-                onBlur={touchOnBlur("headline")}
-                placeholder="Backend engineer, distributed systems"
-              />
-            </Field>
-
-            <div className="auth-form-row">
               <Field
-                label="Years of experience"
-                id={fieldId("years_experience")}
-                error={shown.years_experience}
-                hint="Roles set a minimum."
+                label="Email"
+                id={fieldId("email")}
+                // The notice below says what to do; the field shows which input is at fault.
+                error={shown.email ?? (isDuplicateEmail(error) ? "This email already has an account." : undefined)}
+                hint="You will sign in with it. Hiring teams use it to reach you."
                 required
               >
                 <Input
-                  type="number"
-                  inputMode="numeric"
-                  min={0}
-                  max={LIMITS.yearsMax}
-                  step={1}
-                  value={draft.years_experience}
-                  onChange={(event) => update("years_experience", event.target.value)}
-                  onBlur={touchOnBlur("years_experience")}
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  value={draft.email}
+                  onChange={(event) => update("email", event.target.value)}
+                  onBlur={touchOnBlur("email")}
+                  placeholder="ayesha@example.com"
                 />
               </Field>
-              <Field label="Phone" id={fieldId("phone")} error={shown.phone} optional>
-                <Input
-                  type="tel"
-                  autoComplete="tel"
-                  value={draft.phone}
-                  onChange={(event) => update("phone", event.target.value)}
-                  onBlur={touchOnBlur("phone")}
-                  placeholder="+92 300 1234567"
-                />
-              </Field>
-            </div>
 
-            <Field
-              label="Skills"
-              id={fieldId("skills")}
-              error={shown.skills}
-              hint="Press Enter or a comma after each one. To apply, you need at least one skill a role asks for."
-            >
-              <TagInput
-                value={draft.skills}
-                onChange={(skills) => update("skills", skills)}
-                normalize={normalizeSkill}
-                suggestions={SKILL_IDEAS}
-                placeholder={draft.skills.length ? "Add another" : "python, react, sql…"}
-              />
-            </Field>
-            {draft.skills.length === 0 && (
-              <p className="auth-inline-tip">
-                <Icon name="info" size={14} />
-                Without skills you can still sign up, but most roles will not be open to you
-                until you add some on your profile.
-              </p>
-            )}
-          </section>
-        )}
+              <div className="auth-password-field">
+                <Field label="Password" id={fieldId("password")} error={shown.password} required>
+                  <PasswordInput
+                    autoComplete="new-password"
+                    value={draft.password}
+                    onChange={(event) => update("password", event.target.value)}
+                    onBlur={touchOnBlur("password")}
+                  />
+                </Field>
+                <PasswordStrength
+                  password={draft.password}
+                  context={{ email: draft.email, fullName: draft.full_name }}
+                />
+              </div>
+            </section>
+          ) : (
+            <section className="auth-step-panel" aria-labelledby="register-step-title">
+              <h2 id="register-step-title" className="sr-only">
+                Step 2: your profile
+              </h2>
+              <div className="auth-summary">
+                <Avatar name={draft.full_name || draft.email} size="sm" />
+                <div className="auth-summary-text">
+                  <span className="auth-summary-name">{draft.full_name.trim()}</span>
+                  <span className="auth-summary-email">{draft.email.trim()}</span>
+                </div>
+                <Button variant="ghost" size="sm" leftIcon="edit" onClick={() => goTo("account")}>
+                  Edit<span className="sr-only"> account details</span>
+                </Button>
+              </div>
+
+              <Field
+                label="Headline"
+                id={fieldId("headline")}
+                error={shown.headline}
+                hint="One line that sums up what you do. It tops your profile."
+                labelAside={`${codePointLength(draft.headline.trim())} / ${LIMITS.headlineMax}`}
+                optional
+              >
+                <Input
+                  value={draft.headline}
+                  onChange={(event) => update("headline", event.target.value)}
+                  onBlur={touchOnBlur("headline")}
+                  placeholder="Backend engineer, distributed systems"
+                />
+              </Field>
+
+              <div className="auth-form-row">
+                <Field
+                  label="Years of experience"
+                  id={fieldId("years_experience")}
+                  error={shown.years_experience}
+                  hint="Roles set a minimum."
+                  required
+                >
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    max={LIMITS.yearsMax}
+                    step={1}
+                    value={draft.years_experience}
+                    onChange={(event) => update("years_experience", event.target.value)}
+                    onBlur={touchOnBlur("years_experience")}
+                  />
+                </Field>
+                <Field label="Phone" id={fieldId("phone")} error={shown.phone} optional>
+                  <Input
+                    type="tel"
+                    autoComplete="tel"
+                    value={draft.phone}
+                    onChange={(event) => update("phone", event.target.value)}
+                    onBlur={touchOnBlur("phone")}
+                    placeholder="+92 300 1234567"
+                  />
+                </Field>
+              </div>
+
+              <Field
+                label="Skills"
+                id={fieldId("skills")}
+                error={shown.skills}
+                hint={`Press Enter or a comma after each one, up to ${LIMITS.skillsMax}. To apply, you need at least one skill a role asks for.`}
+              >
+                <TagInput
+                  value={draft.skills}
+                  maxTags={LIMITS.skillsMax}
+                  onChange={(skills) => update("skills", skills)}
+                  normalize={normalizeSkill}
+                  suggestions={SKILL_IDEAS}
+                  placeholder={draft.skills.length ? "Add another" : "python, react, sql…"}
+                />
+              </Field>
+              {draft.skills.length === 0 && (
+                <p className="auth-inline-tip">
+                  <Icon name="info" size={14} />
+                  Without skills you can still sign up, but most roles will not be open to you
+                  until you add some on your profile.
+                </p>
+              )}
+            </section>
+          )}
+        </fieldset>
 
         <RegistrationError error={error} created={created} email={draft.email.trim()} />
 
@@ -348,7 +355,8 @@ function RegistrationError({
   if (created) {
     return (
       <Notice tone="rule" title="Your account is ready, but signing in failed" action={signInLink}>
-        Try again, or sign in yourself with the email and password you just chose.
+        Try again, or sign in yourself with the email and password you just chose. Your
+        details are saved as entered — change them on your profile once you are in.
       </Notice>
     );
   }

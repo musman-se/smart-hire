@@ -231,7 +231,7 @@ export function PipelinePage() {
             candidatesById={candidatesById}
             showClosed={showClosed}
             onShowClosedChange={setShowClosed}
-            pendingId={stageChange.pendingId}
+            pendingIds={stageChange.pendingIds}
             onOpen={open}
             onRequestMove={stageChange.requestMove}
           />

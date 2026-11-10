@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { RouterProvider, createMemoryRouter, useParams } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "../../api/client";
 import { jobsApi } from "../../api/resources";
 import type { Job } from "../../api/types";
 import { ConfirmProvider, ToastProvider } from "../../components/ui";
@@ -13,7 +14,7 @@ vi.mock("../../api/resources", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/resources")>();
   return {
     ...actual,
-    jobsApi: { ...actual.jobsApi, create: vi.fn(), publish: vi.fn(), get: vi.fn() },
+    jobsApi: { ...actual.jobsApi, create: vi.fn(), publish: vi.fn(), get: vi.fn(), update: vi.fn() },
     skillsApi: { list: vi.fn(async () => ({ items: [], total: 0, limit: 8, offset: 0 })) },
   };
 });
@@ -38,14 +39,15 @@ function JobPage() {
   return <p>Job page {useParams().jobId}</p>;
 }
 
-function renderEditor() {
+function renderEditor(path = "/jobs/new") {
   const router = createMemoryRouter(
     [
       { path: "/jobs", element: <p>Jobs list</p> },
       { path: "/jobs/new", element: <JobEditorPage /> },
+      { path: "/jobs/:jobId/edit", element: <JobEditorPage /> },
       { path: "/jobs/:jobId", element: <JobPage /> },
     ],
-    { initialEntries: ["/jobs", "/jobs/new"], initialIndex: 1 },
+    { initialEntries: ["/jobs", path], initialIndex: 1 },
   );
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -130,11 +132,51 @@ describe("JobEditorPage — new job", () => {
     expect(await screen.findByText("Jobs list")).toBeInTheDocument();
   });
 
+  it("resends the same key after 'still processing', so a third click cannot create a second job", async () => {
+    vi.mocked(jobsApi.create)
+      .mockRejectedValueOnce(new ApiError(409, "idempotency_in_progress", "Still processing"))
+      .mockResolvedValueOnce(created);
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(titleBox());
+    await user.paste("Backend Engineer");
+    await user.click(descriptionBox());
+    await user.paste("Build and run the hiring platform's APIs.");
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    expect(await screen.findByText("Still processing your first attempt")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    expect(await screen.findByText("Job page job-9")).toBeInTheDocument();
+    const [first, second] = vi.mocked(jobsApi.create).mock.calls.map(([, key]) => key);
+    expect(second).toBe(first);
+  });
+
   it("leaves without asking when nothing was typed", async () => {
     const user = userEvent.setup();
     renderEditor();
 
     await user.click(screen.getByRole("link", { name: "Cancel" }));
     expect(await screen.findByText("Jobs list")).toBeInTheDocument();
+  });
+});
+
+describe("JobEditorPage — existing job", () => {
+  beforeEach(() => {
+    vi.mocked(jobsApi.get).mockReset().mockResolvedValue(created);
+    vi.mocked(jobsApi.update).mockReset().mockResolvedValue(created);
+  });
+
+  it("does not report a save, or leave, on mod+S with nothing changed", async () => {
+    const user = userEvent.setup();
+    renderEditor("/jobs/job-9/edit");
+
+    await waitFor(() => expect(titleBox()).toHaveValue("Backend Engineer"));
+    await user.keyboard("{Control>}s{/Control}");
+
+    expect(await screen.findByText("No changes to save")).toBeInTheDocument();
+    expect(jobsApi.update).not.toHaveBeenCalled();
+    expect(screen.queryByText("Job page job-9")).not.toBeInTheDocument();
+    expect(titleBox()).toBeInTheDocument();
   });
 });

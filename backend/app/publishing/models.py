@@ -29,7 +29,6 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Identity,
-    Index,
     Integer,
     SmallInteger,
     String,
@@ -99,5 +98,7 @@ job_extracted_skills = Table(
     # How many times the text mentions the skill — a rough signal of its weight.
     Column("mentions", Integer, nullable=False),
     CheckConstraint("mentions > 0", name="mentions_positive"),
-    Index("ix_job_extracted_skills_skill_id", "skill_id"),
+    # No index on skill_id: every read is by job_id (the primary key's leading column),
+    # and skills are never deleted, so the RESTRICT check that would use one never runs.
+    # It cost a write on every publish and refresh for nothing (dropped in 9c4f7d2e1b60).
 )

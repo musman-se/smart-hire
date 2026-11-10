@@ -40,6 +40,7 @@ from temporalio.exceptions import ActivityError, ApplicationError
 # re-imports modules to isolate each run; these are only used for their names and
 # dataclasses, so they are passed through rather than re-imported.
 with workflow.unsafe.imports_passed_through():
+    from app.core.temporal import NON_RETRYABLE_DATABASE_ERRORS
     from app.publishing.activities import (
         JOB_NOT_FOUND,
         MarkFailedInput,
@@ -55,6 +56,10 @@ class PublishJobInput:
     # Part of the input rather than read from settings inside the workflow: a workflow
     # must not read anything that could differ when it is replayed.
     max_attempts: int = 5
+    # True when the job was already PUBLISHED and this run re-analyses its content. Only
+    # then may a failure be recorded on a live job: a first publish whose final step
+    # committed but whose reply was lost must not be marked "refresh failed".
+    refresh: bool = False
 
 
 @dataclass
@@ -83,10 +88,32 @@ _DATABASE_ERRORS = frozenset(
 )
 
 
+# A database that cannot be reached at all surfaces as a builtin OSError subclass, not
+# a SQLAlchemy error; its message carries the database's address. Same treatment.
+_CONNECTION_ERRORS = frozenset(
+    {
+        "OSError",
+        "ConnectionError",
+        "ConnectionRefusedError",
+        "ConnectionResetError",
+        "ConnectionAbortedError",
+        "TimeoutError",
+        "gaierror",
+        "InvalidPasswordError",
+        "CannotConnectNowError",
+    }
+)
+
+
 def failure_reason(cause: BaseException | None) -> str:
     """What the recruiter is told in publish_error, from the failed activity's cause.
     Plain string work, so deterministic — safe inside a workflow."""
     if isinstance(cause, ApplicationError):
+        if cause.type in _CONNECTION_ERRORS:
+            return (
+                "The database could not be reached. The details are in the worker log "
+                "and the Temporal UI."
+            )
         if cause.type in _DATABASE_ERRORS:
             return (
                 "The database refused the extracted content. The details are in the worker "
@@ -119,8 +146,9 @@ class PublishJobWorkflow:
                 backoff_coefficient=2.0,  # 1s, 2s, 4s, 8s ...
                 maximum_interval=timedelta(seconds=20),
                 maximum_attempts=data.max_attempts,
-                # Retrying cannot make a deleted job reappear.
-                non_retryable_error_types=[JOB_NOT_FOUND],
+                # Retrying cannot make a deleted job reappear, nor make a statement
+                # the database refused succeed.
+                non_retryable_error_types=[JOB_NOT_FOUND, *NON_RETRYABLE_DATABASE_ERRORS],
             ),
         }
         # Compensation must not give up. If marking the job failed could exhaust its
@@ -171,7 +199,7 @@ class PublishJobWorkflow:
             reason = failure_reason(err.cause)
             await workflow.execute_activity_method(
                 PublishingActivities.mark_job_publish_failed,
-                MarkFailedInput(job_id=job_id, reason=reason),
+                MarkFailedInput(job_id=job_id, reason=reason, refresh=data.refresh),
                 **compensation_options,
             )
             # Fail the workflow itself too, so the run shows as Failed in the UI and in

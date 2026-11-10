@@ -5,6 +5,7 @@ import { ApiError } from "../api/client";
 import { MAX_ACTIVE_APPLICATIONS, type Candidate } from "../api/types";
 import { summarizeApplications } from "../components/applications/stages";
 import { CandidateApplicationItem } from "../components/candidates/CandidateApplicationItem";
+import { isHttpUrl } from "../components/profile/profileForm";
 import {
   Avatar,
   ButtonLink,
@@ -114,7 +115,7 @@ function Profile({ candidate }: { candidate: Candidate }) {
               <Icon name="mail" />
               Email
             </a>
-            {candidate.resume_url && (
+            {candidate.resume_url && isHttpUrl(candidate.resume_url) && (
               <a
                 href={candidate.resume_url}
                 target="_blank"
@@ -245,11 +246,14 @@ function Profile({ candidate }: { candidate: Candidate }) {
               </dd>
               <dt>Resume</dt>
               <dd>
-                {candidate.resume_url ? (
+                {/* Only a web link becomes one: a stored "javascript:" would run on click. */}
+                {candidate.resume_url && isHttpUrl(candidate.resume_url) ? (
                   <a href={candidate.resume_url} target="_blank" rel="noopener noreferrer" className="truncate">
                     Open resume
                     <Icon name="external-link" size={12} />
                   </a>
+                ) : candidate.resume_url ? (
+                  <span className="truncate">{candidate.resume_url}</span>
                 ) : (
                   <span className="subtle">Not provided</span>
                 )}

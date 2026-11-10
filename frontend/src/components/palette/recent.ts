@@ -1,13 +1,16 @@
 /**
  * "Recent" in the command palette: the last few jobs and candidates the user opened,
- * from anywhere in the app. Kept in localStorage — titles only, nothing sensitive —
- * under a per-user key, so a shared browser does not show one account's history to
- * the next.
+ * from anywhere in the app. Kept in localStorage under a per-user key, so a shared
+ * browser does not show one account's history to the next.
+ *
+ * A candidate's name is personal data, so it is kept no longer than the session: every
+ * signed-in user's list is deleted on sign-out (clearAllRecentItems). Contact details
+ * are never stored at all — a candidate's line under their name is their headline.
  */
 
 import { useCallback, useMemo } from "react";
 
-import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { removeStoredByPrefix, useLocalStorage } from "../../hooks/useLocalStorage";
 
 export type RecentKind = "job" | "candidate";
 
@@ -20,8 +23,16 @@ export interface RecentItem {
 
 export const MAX_RECENT = 5;
 
+const RECENT_KEY_PREFIX = "smarthire.palette.recent.";
+
 export function recentStorageKey(userId: string): string {
-  return `smarthire.palette.recent.${userId}`;
+  return `${RECENT_KEY_PREFIX}${userId}`;
+}
+
+/** Every account's list, not just the last one's: a list left by a session that ended
+ * without a sign-out (a closed tab) goes too. */
+export function clearAllRecentItems(): void {
+  removeStoredByPrefix(RECENT_KEY_PREFIX);
 }
 
 export function recentPath(item: Pick<RecentItem, "kind" | "id">): string {

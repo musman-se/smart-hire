@@ -13,12 +13,15 @@ from fastapi.responses import JSONResponse
 
 from app.auth.dependencies import CurrentUserDep, RecruiterDep, require_recruiter
 from app.auth.enums import Role
+from app.auth.models import User
 from app.core.db import SessionDep
 from app.core.idempotency import IdempotencyDep, IdempotencyKey
 from app.core.pagination import Page, PaginationDep
+from app.core.schemas import QueryText
 from app.jobs import service as job_service
 from app.jobs.enums import JobStatus
 from app.jobs.errors import JobNotFoundError
+from app.jobs.models import Job
 from app.jobs.schemas import JobCreate, JobRead, JobUpdate
 from app.publishing import service as publishing_service
 from app.publishing.publisher import JobPublisherDep
@@ -30,6 +33,15 @@ router = APIRouter()
 CANDIDATE_VISIBLE = JobStatus.PUBLISHED
 
 recruiter_only = [Depends(require_recruiter)]
+
+
+def _as_seen_by(user: User, job: Job) -> JobRead:
+    """publish_error is the recruiter's diagnostic — it can name a failed analysis on a
+    live job — not something a candidate reading the posting should see."""
+    read = JobRead.model_validate(job)
+    if user.role is Role.CANDIDATE:
+        return read.model_copy(update={"publish_error": None})
+    return read
 
 
 @router.get(
@@ -45,8 +57,8 @@ async def list_jobs(
     user: CurrentUserDep,
     pagination: PaginationDep,
     status_filter: Annotated[JobStatus | None, Query(alias="status")] = None,
-    skill: Annotated[str | None, Query(description="Match one required skill")] = None,
-    search: Annotated[str | None, Query(description="Case-insensitive title match")] = None,
+    skill: Annotated[QueryText | None, Query(description="Match one required skill")] = None,
+    search: Annotated[QueryText | None, Query(description="Case-insensitive title match")] = None,
 ) -> Page[JobRead]:
     if user.role is Role.CANDIDATE:
         if status_filter not in (None, CANDIDATE_VISIBLE):
@@ -61,7 +73,7 @@ async def list_jobs(
         skill=skill,
         search=search,
     )
-    return Page[JobRead].of(jobs, total, pagination)
+    return Page[JobRead].of([_as_seen_by(user, job) for job in jobs], total, pagination)
 
 
 @router.post(
@@ -91,6 +103,17 @@ async def create_job(
 
 
 @router.get(
+    "/status-counts",
+    response_model=dict[JobStatus, int],
+    summary="Count jobs by status",
+    description="Recruiters only. Every status, zero included, in one request.",
+    dependencies=recruiter_only,
+)
+async def count_jobs_by_status(session: SessionDep) -> dict[JobStatus, int]:
+    return await job_service.count_by_status(session)
+
+
+@router.get(
     "/{job_id}",
     response_model=JobRead,
     summary="Get one job",
@@ -102,13 +125,16 @@ async def create_job(
 async def get_job(session: SessionDep, user: CurrentUserDep, job_id: uuid.UUID) -> JobRead:
     job = await job_service.get_job(session, job_id)
     if user.role is Role.CANDIDATE and job.status is not CANDIDATE_VISIBLE:
+        # Only closed, not every unpublished state: a job reopened as a draft may be
+        # being rewritten for a different role, and that must not reach anyone before
+        # it is published — past applicants included. 404, not 403: to everyone else an
+        # unpublished job does not exist yet.
         applied_before_it_closed = job.status is JobStatus.CLOSED and (
             await job_service.has_applied(session, job_id, user.id)
         )
-        # 404, not 403: to a candidate, an unpublished job does not exist yet.
         if not applied_before_it_closed:
             raise JobNotFoundError(job_id)
-    return JobRead.model_validate(job)
+    return _as_seen_by(user, job)
 
 
 @router.patch(
@@ -117,14 +143,12 @@ async def get_job(session: SessionDep, user: CurrentUserDep, job_id: uuid.UUID) 
 async def update_job(
     session: SessionDep, publisher: JobPublisherDep, job_id: uuid.UUID, payload: JobUpdate
 ) -> JobRead:
-    job = await job_service.update_job(session, job_id, payload)
+    job, content_changed = await job_service.update_job(session, job_id, payload)
     # "When a recruiter publishes or updates a job", the brief says, the content
-    # pipeline runs. A published job whose text changed is re-analysed in the
-    # background; it stays published throughout.
-    if job.status is JobStatus.PUBLISHED and payload.model_fields_set & (
-        publishing_service.CONTENT_FIELDS
-    ):
-        await publishing_service.refresh_content(publisher, job)
+    # pipeline runs. A published job whose title, description or skills actually
+    # changed is re-analysed in the background; it stays published throughout.
+    if job.status is JobStatus.PUBLISHED and content_changed:
+        await publishing_service.refresh_content(session, publisher, job)
     return JobRead.model_validate(job)
 
 

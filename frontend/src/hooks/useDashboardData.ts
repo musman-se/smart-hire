@@ -1,14 +1,14 @@
 /**
  * Everything the recruiter dashboard reads, in one place.
  *
- * Headline numbers come from `limit=1` reads (useJobStatusCounts, useStageCounts), so
- * they are exact. Anything that needs the rows themselves — the trend, activity, top
+ * Headline numbers come from the count endpoints (useJobStatusCounts, useStageCounts,
+ * one request each), so they are exact. Anything that needs the rows themselves — the trend, activity, top
  * jobs, scores — comes from the newest 100 applications, the most one request returns;
  * `truncated` tells the cards to say so. Every key sits under the jobs or applications
  * prefix, so any mutation elsewhere in the app refreshes the dashboard too.
  */
 
-import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 
 import { applicationsApi, type ApplicationFilters } from "../api/resources";
@@ -28,26 +28,28 @@ import { useNow } from "./useNow";
 
 /** The API's page-size ceiling: the largest sample one request can give. */
 export const RECENT_LIMIT = 100;
-/** Capped jobs checked for capacity — one count request each, so it is bounded. */
+/** Capped jobs checked for capacity — all in one count request, which takes up to 100. */
 const CAPACITY_CHECK_LIMIT = 50;
 const RECENT_FILTERS: ApplicationFilters = { limit: RECENT_LIMIT };
 
 /** Applications each job has received in total — what its max_applications cap is
- * measured against on the server. */
+ * measured against on the server — in one request for every job. */
 function useJobIntake(jobs: readonly Job[]) {
-  return useQueries({
-    queries: jobs.map((job) => ({
-      queryKey: [...keys.applications, "intake", job.id] as const,
-      queryFn: () => applicationsApi.list({ job_id: job.id, limit: 1 }).then((page) => page.total),
-    })),
-    combine: (results) => ({
-      intake: jobs.flatMap((job, index) => {
-        const received = results[index]?.data;
+  const ids = useMemo(() => jobs.map((job) => job.id).sort(), [jobs]);
+  const { data, isLoading } = useQuery({
+    queryKey: keys.jobIntake(ids),
+    queryFn: () => applicationsApi.jobCounts(ids),
+    enabled: ids.length > 0,
+  });
+  const intake = useMemo(
+    () =>
+      jobs.flatMap((job) => {
+        const received = data?.[job.id];
         return received === undefined ? [] : [{ job, received }];
       }),
-      isLoading: results.some((result) => result.isLoading),
-    }),
-  });
+    [jobs, data],
+  );
+  return { intake, isLoading };
 }
 
 export function useDashboardData() {

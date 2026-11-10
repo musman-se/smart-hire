@@ -46,7 +46,7 @@ export function TeamPage() {
   const me = useUser();
   const now = useNow();
   const [filters, setFilters] = useUrlState(FILTERS);
-  const { data, error, isLoading, isFetching, refetch } = useTeam({
+  const { data, error, isLoading, isPlaceholderData, refetch } = useTeam({
     limit: filters.limit,
     offset: filters.offset,
   });
@@ -166,7 +166,9 @@ export function TeamPage() {
           columns={columns}
           rows={data?.items}
           getRowId={(member) => member.id}
-          loading={isLoading || isFetching}
+          // Not on background refetches: aria-busy on every refetch would be noise.
+          loading={isLoading || isPlaceholderData}
+          className={isPlaceholderData ? "is-stale" : undefined}
           skeletonRows={6}
           error={error}
           onRetry={() => void refetch()}
