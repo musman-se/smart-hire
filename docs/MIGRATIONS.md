@@ -281,7 +281,7 @@ Expand **Servers → SmartHire** (it asks once for `POSTGRES_PASSWORD` from `.en
 | Table | Holds |
 |---|---|
 | `users` | Accounts: email, Argon2id hash, role |
-| `candidates` | Profiles; `id` is also the account's `users.id` |
+| `candidates`, `recruiters` | Profiles, one table per role; `id` is also the account's `users.id` |
 | `refresh_tokens` | One row per live or rotated refresh token — a SHA-256, never the token |
 | `jobs` | Postings and their lifecycle status |
 | `skills`, `job_skills`, `candidate_skills` | The skill vocabulary and who lists what |

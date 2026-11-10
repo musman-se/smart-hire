@@ -199,8 +199,10 @@ services:
         set -e
         : "$${SEED_PASSWORD:?is not set - add it to .env, see .env.example}"
         email="$${SEED_RECRUITER_EMAIL:-recruiter@example.com}"
+        name="$${SEED_RECRUITER_NAME:-Sara Ahmed}"
         printf %s "$$SEED_PASSWORD" |
-          python -m app.auth.cli create-recruiter "$$email" --password-stdin --exist-ok
+          python -m app.auth.cli create-recruiter "$$email" --name "$$name" \
+            --password-stdin --exist-ok
         python /scripts/seed.py
     environment:
       <<: *backend-environment

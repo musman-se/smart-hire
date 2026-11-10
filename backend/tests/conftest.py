@@ -184,7 +184,7 @@ async def recruiter(engine) -> User:
     """A recruiter account, created the way the CLI creates one."""
     async with async_sessionmaker(engine, expire_on_commit=False)() as db_session:
         return await auth_service.create_recruiter(
-            db_session, "recruiter@example.com", TEST_PASSWORD
+            db_session, "recruiter@example.com", TEST_PASSWORD, "Sara Ahmed"
         )
 
 

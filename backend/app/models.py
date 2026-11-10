@@ -19,6 +19,7 @@ from app.core.models import Base
 from app.jobs.models import Job
 from app.notifications.models import Notification
 from app.publishing.models import JobKeyword, JobSection, job_extracted_skills
+from app.recruiters.models import Recruiter
 from app.skills.models import Skill, candidate_skills, job_skills
 
 __all__ = [
@@ -30,6 +31,7 @@ __all__ = [
     "JobKeyword",
     "JobSection",
     "Notification",
+    "Recruiter",
     "RefreshToken",
     "Skill",
     "User",

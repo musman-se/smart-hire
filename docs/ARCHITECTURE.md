@@ -491,7 +491,7 @@ overflow), leave no connection for anyone else — so the read is committed firs
 
 ### 4.24 A candidate's profile shares its account's primary key
 
-**Decision.** `users` holds credentials only: email, password hash, role.
+**Decision.** `users` is the account: email, password hash, role.
 `candidates.id` is both the primary key of the profile and a foreign key to `users.id`.
 The email moved from `candidates` to `users`.
 
@@ -502,7 +502,8 @@ tables.
 the redundancy normalisation removes. With a shared key the one-to-one relationship is
 enforced by the key itself (a second profile would repeat a primary key), there is no
 extra column or index, and ownership is one comparison: an application is yours when
-`application.candidate_id == user.id`. Recruiters have accounts and no profile.
+`application.candidate_id == user.id`. Recruiters got a profile of the same shape
+later (§4.27).
 
 **Migration.** Existing candidates had no accounts. Revision `d5e8a2f41c07` gives each
 one an account with the same id and **no password** — an account that cannot sign in
@@ -521,6 +522,7 @@ sends a request with no token to every other operation in the OpenAPI document.
 | Jobs | everything | read published jobs, and closed ones they applied to |
 | Publishing status, extracted content | yes | — |
 | Candidates | read all | read, edit, delete their own |
+| Recruiter profile | read and edit their own | — |
 | Apply | — | as themselves |
 | Applications | read all, advance, re-process | read their own — without the match score or the recruiter's notes — and withdraw |
 
@@ -552,13 +554,42 @@ day, and a fast hash of a password is not something to keep in a cache.
 ### 4.26 Recruiters are created from the command line
 
 **Decision.** Candidates register themselves over HTTP. Recruiter accounts are created
-with `python -m app.auth.cli create-recruiter <email>`, which prompts for the password
-(or reads it from stdin, for scripts). The seed service runs it before seeding.
+with `python -m app.auth.cli create-recruiter <email> --name "<full name>"`, which
+prompts for the password (or reads it from stdin, for scripts) and creates the
+recruiter's profile with the account. The seed service runs it before seeding.
 
 **Why.** An HTTP sign-up for recruiters would let anyone grant themselves every job and
 candidate, and the first recruiter could never be created through an endpoint only
 recruiters may call. Whoever can run a command on the server is already trusted.
-`--exist-ok` never promotes an existing account or resets a password.
+`--exist-ok` never promotes an existing account, resets a password or renames anyone.
+
+### 4.27 Recruiters have a profile of their own
+
+**Decision.** A `recruiters` table holds a recruiter's profile: `full_name`, and an
+optional `title` (their own role, such as "Talent Partner"). Like `candidates`, its
+primary key is also a foreign key to `users.id`. A recruiter reads and edits it at
+`/recruiters/me`; it is created with the account, by the CLI.
+
+**Alternatives rejected.** The name on `users`, where candidates would have one twice
+(on `users` and on `candidates`) or recruiters a column candidates leave empty; one
+`profiles` table with every column, nullable for whichever role does not use it.
+
+**Why.** `users` stays the account and each role keeps its own profile, so the database
+can require each role's fields — a NOT NULL `full_name` here, a NOT NULL
+`years_experience` on candidates — without one role's columns sitting empty on the
+other's rows. A name is the first thing a recruiter needs a profile for: "posted by",
+"moved to Interview by".
+
+**Migration.** Recruiter accounts already existed. Revision `45e197ff436b` gives each
+one a profile with a name made from its email's local part ("alice.ahmed@…" becomes
+"Alice Ahmed"), because `full_name` is required and nobody has supplied the real one.
+The recruiter corrects it with `PATCH /recruiters/me`.
+
+**Tradeoff.** Neither profile table checks the account's role, so the database would
+accept a recruiter profile on a candidate's account. Only registration and the CLI
+create profiles, and each sets the matching role. A composite foreign key on
+`(id, role)` would let the database enforce it, at the cost of a `role` column on each
+profile.
 
 ## 5. Gaps
 

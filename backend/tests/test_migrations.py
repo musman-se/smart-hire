@@ -288,3 +288,31 @@ def test_a_job_outside_the_text_bounds_stops_the_upgrade(alembic_config: Config)
     command.upgrade(alembic_config, "81276ef5beaf")
     command.downgrade(alembic_config, "d5e8a2f41c07")
     _insert_job(13, "QA", "Allowed again once the checks are gone.")
+
+
+def test_existing_recruiters_get_a_profile_named_from_their_email(
+    alembic_config: Config,
+) -> None:
+    """45e197ff436b adds recruiters, and the code expects every recruiter account to have
+    a profile. Accounts from before get one, named from the email's local part since
+    full_name is required; candidates get none."""
+    command.upgrade(alembic_config, "81276ef5beaf")
+    _query(
+        """
+        INSERT INTO users (id, email, role) VALUES
+            ('00000000-0000-0000-0000-000000000014', 'alice.ahmed@example.com', 'RECRUITER'),
+            ('00000000-0000-0000-0000-000000000015', '_@example.com', 'RECRUITER'),
+            ('00000000-0000-0000-0000-000000000016', 'cand@example.com', 'CANDIDATE')
+        """
+    )
+
+    command.upgrade(alembic_config, "45e197ff436b")
+
+    assert _query("SELECT id::text, full_name, title FROM recruiters ORDER BY id") == [
+        ("00000000-0000-0000-0000-000000000014", "Alice Ahmed", None),
+        ("00000000-0000-0000-0000-000000000015", "Recruiter", None),
+    ]
+
+    command.downgrade(alembic_config, "81276ef5beaf")
+
+    assert _query("SELECT count(*) FROM users") == [(3,)]

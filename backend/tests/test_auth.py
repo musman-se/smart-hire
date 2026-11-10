@@ -465,7 +465,9 @@ async def test_the_new_password_is_stored_as_an_argon2id_hash(
 
 async def test_a_recruiter_can_change_their_password_too(engine, anonymous: AsyncClient) -> None:
     sessions = async_sessionmaker(engine, expire_on_commit=False)
-    await create_recruiter(sessions, "hr-change@example.com", TEST_PASSWORD, exist_ok=False)
+    await create_recruiter(
+        sessions, "hr-change@example.com", TEST_PASSWORD, "Hina Raza", exist_ok=False
+    )
     tokens = (await sign_in(anonymous, "hr-change@example.com")).json()
 
     response = await change_password(anonymous, tokens["access_token"])
@@ -541,6 +543,8 @@ async def test_every_other_route_requires_a_token(
         ("GET", "/candidates"),
         ("POST", "/applications/{application}/stage"),
         ("POST", "/applications/{application}/process"),
+        ("GET", "/recruiters/me"),
+        ("PATCH", "/recruiters/me"),
     ],
 )
 async def test_a_candidate_cannot_do_a_recruiters_work(
@@ -685,31 +689,40 @@ async def test_a_recruiter_cannot_apply_or_withdraw(client: AsyncClient) -> None
 async def test_the_cli_creates_a_recruiter_who_can_sign_in(engine, anonymous: AsyncClient) -> None:
     sessions = async_sessionmaker(engine, expire_on_commit=False)
 
-    created = await create_recruiter(sessions, "  Lead@Example.com", TEST_PASSWORD, exist_ok=False)
-    repeated = await create_recruiter(sessions, "lead@example.com", "ignored-pw", exist_ok=True)
+    created = await create_recruiter(
+        sessions, "  Lead@Example.com", TEST_PASSWORD, "  Zara Malik ", exist_ok=False
+    )
+    repeated = await create_recruiter(
+        sessions, "lead@example.com", "ignored-pw", "Ignored Name", exist_ok=True
+    )
 
     assert created.startswith("Created recruiter lead@example.com")
     assert "already exists" in repeated
     tokens = (await sign_in(anonymous, "lead@example.com")).json()
-    me = await anonymous.get("/auth/me", headers=bearer(tokens["access_token"]))
+    headers = bearer(tokens["access_token"])
+    me = await anonymous.get("/auth/me", headers=headers)
     assert me.json()["role"] == "recruiter"
+    # The profile came with the account, and --exist-ok renamed nobody.
+    profile = await anonymous.get("/recruiters/me", headers=headers)
+    assert profile.json()["full_name"] == "Zara Malik"
 
 
 @pytest.mark.parametrize(
-    ("email", "password", "message"),
+    ("email", "password", "name", "message"),
     [
-        ("taken@example.com", TEST_PASSWORD, "already exists (candidate)"),
-        ("not-an-email", TEST_PASSWORD, "Not a valid email"),
-        ("new@example.com", "short", "8 to 128 characters"),
+        ("taken@example.com", TEST_PASSWORD, "Some One", "already exists (candidate)"),
+        ("not-an-email", TEST_PASSWORD, "Some One", "Not a valid email"),
+        ("new@example.com", "short", "Some One", "8 to 128 characters"),
+        ("new@example.com", TEST_PASSWORD, "  A  ", "The name must be 2 to 160"),
     ],
-    ids=["existing-candidate", "bad-email", "short-password"],
+    ids=["existing-candidate", "bad-email", "short-password", "short-name"],
 )
 async def test_the_cli_refuses(
-    engine, client: AsyncClient, email: str, password: str, message: str
+    engine, client: AsyncClient, email: str, password: str, name: str, message: str
 ) -> None:
     """--exist-ok never promotes a candidate to recruiter, or resets anyone's password."""
     await make_candidate(client, email="taken@example.com")
     sessions = async_sessionmaker(engine, expire_on_commit=False)
 
     with pytest.raises(SystemExit, match=re.escape(message)):
-        await create_recruiter(sessions, email, password, exist_ok=True)
+        await create_recruiter(sessions, email, password, name, exist_ok=True)
