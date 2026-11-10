@@ -1,4 +1,5 @@
-"""Signing in, refreshing, signing out, and creating recruiter accounts.
+"""Signing in, refreshing, signing out, changing a password, and creating recruiter
+accounts.
 
 Candidates create their own accounts by registering (candidates.service.register_candidate).
 Recruiter accounts are never self-service — an open "register as recruiter" would hand
@@ -18,10 +19,11 @@ from app.auth.enums import Role
 from app.auth.errors import (
     DuplicateEmailError,
     InvalidCredentialsError,
+    InvalidCurrentPasswordError,
     InvalidRefreshTokenError,
 )
 from app.auth.models import RefreshToken, User
-from app.auth.schemas import LoginRequest, TokenPair
+from app.auth.schemas import LoginRequest, PasswordChange, TokenPair
 from app.auth.security import (
     create_access_token,
     hash_password,
@@ -187,6 +189,48 @@ async def logout(session: AsyncSession, raw_token: str) -> None:
         await session.rollback()
     else:
         await _end_every_session(session, stored.user_id)
+
+
+async def change_password(session: AsyncSession, user: User, payload: PasswordChange) -> TokenPair:
+    """Set a new password, end every session the user has, and start a new one for the
+    device that asked, which is the pair returned.
+
+    Every refresh token goes, not just the others': whoever made the change may not be
+    the only one holding a session, and a password change is exactly when someone who
+    suspects that wants them all ended. The caller swaps in the returned pair and stays
+    signed in. Access tokens already handed out last until they expire, minutes at most,
+    as after a sign-out.
+    """
+    # Both hashes are computed with no transaction open, as login does, so the slow part
+    # never holds a pooled connection or a lock.
+    verified_hash = user.password_hash
+    await session.commit()
+    valid, _ = await verify_password(payload.current_password.get_secret_value(), verified_hash)
+    if not valid:
+        logger.info("password_change_refused user=%s", user.id)
+        raise InvalidCurrentPasswordError()
+    new_hash = await hash_password(payload.new_password.get_secret_value())
+
+    # The user's refresh tokens are locked before the user: refresh and logout lock a
+    # token, then the user, and taking them the other way round here could deadlock with
+    # a refresh in flight. Ordered by id, so two changes at once lock in the same order.
+    await session.execute(
+        select(RefreshToken.id)
+        .where(RefreshToken.user_id == user.id)
+        .order_by(RefreshToken.id)
+        .with_for_update()
+    )
+    locked = await _lock_user(session, user.id)
+    # Changed by another request while this one was hashing: the password it checked is
+    # no longer the current one.
+    if locked is None or locked.password_hash != verified_hash:
+        await session.rollback()
+        raise InvalidCurrentPasswordError()
+
+    locked.password_hash = new_hash
+    await session.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
+    logger.info("password_changed user=%s — every session ended", user.id)
+    return await _issue_tokens(session, locked)
 
 
 async def create_recruiter(session: AsyncSession, email: str, password: str) -> User:

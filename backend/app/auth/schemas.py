@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from app.auth.enums import Role
 from app.core.schemas import InputModel, ReadModel
@@ -29,6 +29,23 @@ class LoginRequest(InputModel):
     @classmethod
     def normalise_email(cls, value: str) -> str:
         return value.strip().lower()
+
+
+class PasswordChange(InputModel):
+    # The current password, like a sign-in, is checked against what is stored, so it
+    # carries no length rule. The new one follows registration's rules.
+    current_password: SecretStr = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
+    new_password: SecretStr = Field(
+        min_length=PASSWORD_MIN_LENGTH,
+        max_length=PASSWORD_MAX_LENGTH,
+        description=f"{PASSWORD_MIN_LENGTH} to {PASSWORD_MAX_LENGTH} characters",
+    )
+
+    @model_validator(mode="after")
+    def must_change(self) -> "PasswordChange":
+        if self.new_password.get_secret_value() == self.current_password.get_secret_value():
+            raise ValueError("The new password must differ from the current one.")
+        return self
 
 
 class RefreshRequest(InputModel):

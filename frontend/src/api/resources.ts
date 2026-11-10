@@ -47,6 +47,12 @@ export const authApi = {
   logout: (refreshToken: string) =>
     api.post<void>("/auth/logout", { refresh_token: refreshToken }, { anonymous: true }),
   me: () => api.get<User>("/auth/me"),
+  /** Ends every session, this one included; the pair returned replaces it. */
+  changePassword: (currentPassword: string, newPassword: string) =>
+    api.post<TokenPair>("/auth/change-password", {
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
 };
 
 export const jobsApi = {

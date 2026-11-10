@@ -18,6 +18,7 @@ import { useCallback, useMemo } from "react";
 
 import {
   applicationsApi,
+  authApi,
   candidatesApi,
   healthApi,
   jobsApi,
@@ -39,6 +40,7 @@ import {
   type JobStatus,
   type JobUpdate,
 } from "../api/types";
+import { session } from "../auth/session";
 import { scorePollInterval } from "../components/applications/stages";
 
 /** Centralised keys so an invalidation cannot miss a cache by mistyping a string. */
@@ -258,6 +260,19 @@ export function useUpdateCandidate(id: string) {
       client.setQueryData(keys.candidate(id), candidate);
       client.invalidateQueries({ queryKey: keys.candidates });
     },
+  });
+}
+
+// --- Account ---------------------------------------------------------------------
+
+/** The API ends every session, this tab's included, and answers with a new pair:
+ * stored at once, so the next request is signed with it and the old refresh token,
+ * now unknown to the server, is never presented. */
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: ({ current, next }: { current: string; next: string }) =>
+      authApi.changePassword(current, next),
+    onSuccess: (tokens) => session.store(tokens),
   });
 }
 
