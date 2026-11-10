@@ -1,4 +1,4 @@
-import { codePointLength } from "./validation";
+import { codePointLength, type FieldErrors } from "./validation";
 
 /** Mirrors PASSWORD_MIN_LENGTH / PASSWORD_MAX_LENGTH in backend/app/auth/schemas.py. */
 export const PASSWORD_MIN_LENGTH = 8;
@@ -105,6 +105,29 @@ export function passwordChecks(password: string, context: PasswordContext = {}):
       required: false,
     },
   ];
+}
+
+export type PasswordChangeField = "current" | "next" | "confirm";
+export const PASSWORD_CHANGE_ORDER: readonly PasswordChangeField[] = ["current", "next", "confirm"];
+
+/**
+ * The current password is checked by the server only, as at sign-in. The new one
+ * follows registration's length rule and must differ, which the API also enforces; the
+ * confirmation is the console's own check, against a typo nobody could sign in with.
+ */
+export function validatePasswordChange(
+  values: Record<PasswordChangeField, string>,
+): FieldErrors<PasswordChangeField> {
+  const errors: FieldErrors<PasswordChangeField> = {};
+  const length = codePointLength(values.next);
+  if (!values.current) errors.current = "Enter your current password";
+  if (!values.next) errors.next = "Choose a new password";
+  else if (length < PASSWORD_MIN_LENGTH || length > PASSWORD_MAX_LENGTH)
+    errors.next = `Use ${PASSWORD_MIN_LENGTH} to ${PASSWORD_MAX_LENGTH} characters`;
+  else if (values.next === values.current) errors.next = "Choose a password you are not using now";
+  if (!values.confirm) errors.confirm = "Enter the new password again";
+  else if (values.confirm !== values.next) errors.confirm = "The passwords do not match";
+  return errors;
 }
 
 /**

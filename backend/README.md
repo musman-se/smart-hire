@@ -86,8 +86,8 @@ paste the access token into **Authorize**).
 
 ### Authentication
 
-Every endpoint needs `Authorization: Bearer <access token>` except these, and the
-health probes:
+Every endpoint needs `Authorization: Bearer <access token>` except the first four of
+these, and the health probes:
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -96,6 +96,7 @@ health probes:
 | POST | `/auth/refresh` | Refresh token → a new pair. Each refresh token works once |
 | POST | `/auth/logout` | End the session: its refresh token is deleted |
 | GET | `/auth/me` | The signed-in user (requires a token) |
+| POST | `/auth/change-password` | Current + new password (requires a token). Ends every session and returns a new pair for the caller |
 
 Recruiters are not created over HTTP:
 
@@ -200,6 +201,7 @@ request and in the `X-Request-ID` response header.
 | `invalid_credentials` | 401 | Wrong email or password (one answer for both) |
 | `invalid_refresh_token` | 401 | Refresh token unknown, expired or already used — sign in |
 | `forbidden` | 403 | Your role cannot do this |
+| `invalid_current_password` | 403 | Changing the password with the wrong current one. Not a 401: the token is fine |
 | `not_found` | 404 | No such job, candidate, or application — or not yours to see |
 | `duplicate_email` | 409 | An account with this email already exists |
 | `duplicate_application` | 409 | Candidate already applied to this job |

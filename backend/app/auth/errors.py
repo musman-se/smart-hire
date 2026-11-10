@@ -44,6 +44,16 @@ class InvalidRefreshTokenError(UnauthorizedError):
         super().__init__("The refresh token is invalid, expired or already used. Sign in again.")
 
 
+class InvalidCurrentPasswordError(ForbiddenError):
+    """Changing a password with the wrong current one. A 403, not a 401: the access
+    token is fine, and a 401 tells the console to refresh it and then sign out."""
+
+    code = "invalid_current_password"
+
+    def __init__(self) -> None:
+        super().__init__("The current password is incorrect.")
+
+
 class RoleRequiredError(ForbiddenError):
     def __init__(self, role: str) -> None:
         super().__init__(f"Only a {role} can do this.")

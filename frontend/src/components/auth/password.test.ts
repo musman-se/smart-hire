@@ -5,6 +5,7 @@ import {
   PASSWORD_MIN_LENGTH,
   passwordChecks,
   passwordStrength,
+  validatePasswordChange,
 } from "./password";
 
 const check = (password: string, id: string, context = {}) =>
@@ -74,5 +75,40 @@ describe("passwordChecks", () => {
 
   it("ignores name parts too short to matter", () => {
     expect(check("aliboard99", "personal", { fullName: "Al B" })?.met).toBe(true);
+  });
+});
+
+describe("validatePasswordChange", () => {
+  const valid = { current: "old-password", next: "a-new-passphrase", confirm: "a-new-passphrase" };
+
+  it("accepts a complete, matching change", () => {
+    expect(validatePasswordChange(valid)).toEqual({});
+  });
+
+  it("asks for every field", () => {
+    expect(Object.keys(validatePasswordChange({ current: "", next: "", confirm: "" }))).toEqual([
+      "current",
+      "next",
+      "confirm",
+    ]);
+  });
+
+  it("holds the new password to the API's length rule, counted in code points", () => {
+    const short = "a".repeat(PASSWORD_MIN_LENGTH - 1);
+    expect(validatePasswordChange({ ...valid, next: short, confirm: short }).next).toMatch(/characters/);
+    // Seven emoji are fourteen UTF-16 units but seven characters to the API: too short.
+    const emoji = "🔒".repeat(PASSWORD_MIN_LENGTH - 1);
+    expect(validatePasswordChange({ ...valid, next: emoji, confirm: emoji }).next).toBeDefined();
+  });
+
+  it("refuses the current password as the new one", () => {
+    const same = { current: "same-password", next: "same-password", confirm: "same-password" };
+    expect(validatePasswordChange(same).next).toMatch(/not using now/);
+  });
+
+  it("refuses a confirmation that does not match", () => {
+    expect(validatePasswordChange({ ...valid, confirm: "a-new-passphrasf" }).confirm).toBe(
+      "The passwords do not match",
+    );
   });
 });

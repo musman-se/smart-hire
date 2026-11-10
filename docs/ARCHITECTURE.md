@@ -565,7 +565,8 @@ recruiters may call. Whoever can run a command on the server is already trusted.
 | Gap | Status / where it belongs |
 |---|---|
 | ~~**No authentication** — every endpoint is open~~ | Fixed after review — §4.22–4.26 |
-| No password reset or email verification; pre-auth candidates cannot sign in | Needs an email channel — the notifications table is the seam |
+| ~~No way to change a password~~ | Fixed — `POST /auth/change-password` needs the current password, ends every session, returns a new pair |
+| No password reset ("forgot password") or email verification; pre-auth candidates cannot sign in | Needs an email channel — Module 3; the notifications table is the seam |
 | An access token outlives sign-out by up to 15 minutes | By design (§4.22); a deny-list in Redis if it ever matters |
 | Used and expired refresh tokens accumulate | A periodic purge of rows past `expires_at` |
 | The console holds the refresh token where script on the page could read it | An httpOnly cookie — [frontend/README.md](../frontend/README.md#authentication) |

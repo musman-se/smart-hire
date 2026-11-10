@@ -2,6 +2,7 @@ import type { User } from "../api/types";
 import { useUser } from "../auth/AuthProvider";
 import { AccountCard } from "../components/profile/AccountCard";
 import { AppearanceSettings } from "../components/profile/AppearanceSettings";
+import { ChangePasswordCard } from "../components/profile/ChangePasswordCard";
 import { ProfileEditor } from "../components/profile/ProfileEditor";
 import {
   Avatar,
@@ -41,6 +42,7 @@ function CandidateProfile({ user }: { user: User }) {
       )}
       <section className="profile-settings" aria-label="Account and preferences">
         <AccountCard user={user} />
+        <ChangePasswordCard user={user} />
         <AppearanceSettings />
       </section>
     </>
@@ -52,11 +54,12 @@ function RecruiterProfile({ user }: { user: User }) {
     <>
       <PageHeader
         title="Your account"
-        description="Sign-in details and how SmartHire looks for you."
+        description="Sign-in details, your password, and how SmartHire looks for you."
         leading={<Avatar name={user.email} size="lg" />}
       />
       <div className="profile-settings">
         <AccountCard user={user} />
+        <ChangePasswordCard user={user} />
         <AppearanceSettings />
         <Card>
           <CardHeader title="Work faster" icon="keyboard" description="Most of SmartHire is a keystroke away." />

@@ -1,10 +1,11 @@
 """Auth endpoints — the only domain routes reachable without an access token, apart
-from /auth/me.
+from /auth/me and /auth/change-password.
 
     POST /auth/register   a candidate creates their account and profile
     POST /auth/login      email + password -> access token + refresh token
     POST /auth/refresh    refresh token -> a new pair; the old refresh token stops working
     POST /auth/logout     revoke a refresh token
+    POST /auth/change-password   current + new password -> every session ends, a new pair
     GET  /auth/me         who the access token belongs to
 
 Register has no Idempotency-Key. The idempotency record keeps a SHA-256 of the request
@@ -17,7 +18,13 @@ from fastapi import APIRouter, status
 
 from app.auth import service as auth_service
 from app.auth.dependencies import CurrentUserDep
-from app.auth.schemas import LoginRequest, RefreshRequest, TokenPair, UserRead
+from app.auth.schemas import (
+    LoginRequest,
+    PasswordChange,
+    RefreshRequest,
+    TokenPair,
+    UserRead,
+)
 from app.candidates import service as candidate_service
 from app.candidates.schemas import CandidateRead, CandidateRegistration
 from app.core.db import SessionDep
@@ -68,6 +75,28 @@ async def refresh(session: SessionDep, payload: RefreshRequest) -> TokenPair:
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, summary="Sign out")
 async def logout(session: SessionDep, payload: RefreshRequest) -> None:
     await auth_service.logout(session, payload.refresh_token)
+
+
+@router.post(
+    "/change-password",
+    response_model=TokenPair,
+    summary="Change your password",
+    description=(
+        "Needs the current password as well as the access token: a token left on an "
+        "unlocked screen is not enough to take the account. Every session the user has "
+        "ends, on every device. The pair returned starts a new one for the caller; use "
+        "it in place of the old pair. Access tokens issued before stay valid until they "
+        "expire, a few minutes at most."
+    ),
+    responses={
+        **_UNAUTHORIZED,
+        403: {"model": ErrorResponse, "description": "The current password is incorrect"},
+    },
+)
+async def change_password(
+    session: SessionDep, user: CurrentUserDep, payload: PasswordChange
+) -> TokenPair:
+    return await auth_service.change_password(session, user, payload)
 
 
 @router.get("/me", response_model=UserRead, summary="The signed-in user", responses=_UNAUTHORIZED)

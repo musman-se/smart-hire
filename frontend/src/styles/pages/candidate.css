@@ -759,6 +759,16 @@
   gap: var(--space-1);
   min-width: 0;
 }
+.profile-password-form {
+  display: grid;
+  gap: var(--space-4);
+}
+.profile-password-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
 .profile-setting {
   display: grid;
   justify-items: start;

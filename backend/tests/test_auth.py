@@ -370,6 +370,110 @@ async def test_signing_out_revokes_the_refresh_token(anonymous: AsyncClient) -> 
     assert (await anonymous.post("/auth/refresh", json=body)).status_code == 401
 
 
+# --- Changing the password --------------------------------------------------------------
+
+NEW_PASSWORD = "a-brand-new-passphrase"
+
+
+async def change_password(
+    client: AsyncClient, access_token: str, current: str = TEST_PASSWORD, new: str = NEW_PASSWORD
+):
+    return await client.post(
+        "/auth/change-password",
+        json={"current_password": current, "new_password": new},
+        headers=bearer(access_token),
+    )
+
+
+async def test_changing_the_password_replaces_the_old_one(anonymous: AsyncClient) -> None:
+    await make_candidate(anonymous, email="change@example.com")
+    tokens = (await sign_in(anonymous, "change@example.com")).json()
+
+    response = await change_password(anonymous, tokens["access_token"])
+
+    assert response.status_code == 200
+    assert (await sign_in(anonymous, "change@example.com")).status_code == 401
+    assert (await sign_in(anonymous, "change@example.com", NEW_PASSWORD)).status_code == 200
+
+
+async def test_changing_the_password_ends_every_session_but_starts_a_new_one(
+    anonymous: AsyncClient,
+) -> None:
+    """The laptop that changed it stays signed in on the pair it gets back; the phone,
+    and the laptop's own old refresh token, are done."""
+    await make_candidate(anonymous, email="devices@example.com")
+    laptop = (await sign_in(anonymous, "devices@example.com")).json()
+    phone = (await sign_in(anonymous, "devices@example.com")).json()
+
+    fresh = (await change_password(anonymous, laptop["access_token"])).json()
+
+    for old in (laptop, phone):
+        refused = await anonymous.post(
+            "/auth/refresh", json={"refresh_token": old["refresh_token"]}
+        )
+        assert refused.status_code == 401
+    renewed = await anonymous.post("/auth/refresh", json={"refresh_token": fresh["refresh_token"]})
+    assert renewed.status_code == 200
+    me = await anonymous.get("/auth/me", headers=bearer(fresh["access_token"]))
+    assert me.json()["email"] == "devices@example.com"
+
+
+async def test_a_wrong_current_password_changes_nothing(anonymous: AsyncClient) -> None:
+    """403, not 401: the token is fine, and a 401 would make the console refresh it and
+    then sign the user out over a typo."""
+    await make_candidate(anonymous, email="typo@example.com")
+    tokens = (await sign_in(anonymous, "typo@example.com")).json()
+
+    response = await change_password(anonymous, tokens["access_token"], current="not-it-at-all")
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "invalid_current_password"
+    assert (await sign_in(anonymous, "typo@example.com")).status_code == 200
+    kept = await anonymous.post("/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+    assert kept.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("new", "why"),
+    [("1234567", "too short"), ("x" * 129, "too long"), (TEST_PASSWORD, "unchanged")],
+)
+async def test_the_new_password_must_be_valid_and_different(
+    anonymous: AsyncClient, new: str, why: str
+) -> None:
+    await make_candidate(anonymous, email=f"rules-{len(new)}@example.com")
+    tokens = (await sign_in(anonymous, f"rules-{len(new)}@example.com")).json()
+
+    response = await change_password(anonymous, tokens["access_token"], new=new)
+
+    assert response.status_code == 422, why
+    assert response.json()["error"]["code"] == "validation_error"
+    assert (await sign_in(anonymous, f"rules-{len(new)}@example.com")).status_code == 200
+
+
+async def test_the_new_password_is_stored_as_an_argon2id_hash(
+    anonymous: AsyncClient, session: AsyncSession
+) -> None:
+    await make_candidate(anonymous, email="rehash@example.com")
+    tokens = (await sign_in(anonymous, "rehash@example.com")).json()
+
+    await change_password(anonymous, tokens["access_token"])
+
+    stored = await session.scalar(select(User).where(User.email == "rehash@example.com"))
+    assert stored.password_hash.startswith("$argon2id$")
+    assert NEW_PASSWORD not in stored.password_hash
+
+
+async def test_a_recruiter_can_change_their_password_too(engine, anonymous: AsyncClient) -> None:
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    await create_recruiter(sessions, "hr-change@example.com", TEST_PASSWORD, exist_ok=False)
+    tokens = (await sign_in(anonymous, "hr-change@example.com")).json()
+
+    response = await change_password(anonymous, tokens["access_token"])
+
+    assert response.status_code == 200
+    assert (await sign_in(anonymous, "hr-change@example.com", NEW_PASSWORD)).status_code == 200
+
+
 # --- Secure by default ------------------------------------------------------------------
 
 PUBLIC_ROUTES = {
