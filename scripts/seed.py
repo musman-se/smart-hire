@@ -185,7 +185,7 @@ def main() -> None:
     if recruiter is None:
         print(
             f"Cannot sign in as {RECRUITER_EMAIL}. Create the recruiter first:\n"
-            f"  python -m app.auth.cli create-recruiter {RECRUITER_EMAIL}\n"
+            f'  python -m app.auth.cli create-recruiter {RECRUITER_EMAIL} --name "Your Name"\n'
             "(`docker compose run --rm seed` does this for you.)"
         )
         raise SystemExit(1)

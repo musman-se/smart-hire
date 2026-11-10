@@ -32,6 +32,7 @@ from app.auth.security import (
     verify_password,
 )
 from app.core.config import settings
+from app.recruiters.models import Recruiter
 
 logger = logging.getLogger(__name__)
 
@@ -233,10 +234,20 @@ async def change_password(session: AsyncSession, user: User, payload: PasswordCh
     return await _issue_tokens(session, locked)
 
 
-async def create_recruiter(session: AsyncSession, email: str, password: str) -> User:
-    """Email and password must already be validated — see app/auth/cli.py."""
-    user = User(email=email, password_hash=await hash_password(password), role=Role.RECRUITER)
-    session.add(user)
+async def create_recruiter(
+    session: AsyncSession, email: str, password: str, full_name: str
+) -> User:
+    """Create a recruiter's account and profile together, in one transaction, as
+    register_candidate does for a candidate. Email, password and name must already be
+    validated — see app/auth/cli.py."""
+    user = User(
+        id=uuid.uuid4(),
+        email=email,
+        password_hash=await hash_password(password),
+        role=Role.RECRUITER,
+    )
+    # The relationship is what orders the INSERTs: users first.
+    session.add(Recruiter(id=user.id, user=user, full_name=full_name))
     try:
         await session.commit()
     except IntegrityError as exc:

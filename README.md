@@ -128,7 +128,7 @@ applications. Short-lived JWT access tokens, refresh tokens that rotate on every
 Argon2id password hashes. Recruiter accounts are created from the command line:
 
 ```bash
-docker compose exec api python -m app.auth.cli create-recruiter alice@example.com
+docker compose exec api python -m app.auth.cli create-recruiter alice@example.com --name "Alice Ahmed"
 ```
 
 Design and tradeoffs: [docs/ARCHITECTURE.md §4.22–4.26](docs/ARCHITECTURE.md#422-short-lived-jwts-and-refresh-tokens-that-rotate).

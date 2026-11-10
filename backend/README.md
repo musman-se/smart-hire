@@ -98,10 +98,11 @@ these, and the health probes:
 | GET | `/auth/me` | The signed-in user (requires a token) |
 | POST | `/auth/change-password` | Current + new password (requires a token). Ends every session and returns a new pair for the caller |
 
-Recruiters are not created over HTTP:
+Recruiters are not created over HTTP. The command creates the account and the
+recruiter's profile together, and prompts for the password:
 
 ```bash
-docker compose exec api python -m app.auth.cli create-recruiter alice@example.com
+docker compose exec api python -m app.auth.cli create-recruiter alice@example.com --name "Alice Ahmed"
 ```
 
 **Roles.** A recruiter manages jobs, publishing and the hiring pipeline, and reads every
@@ -138,6 +139,15 @@ have seen, answers 404, as if it did not exist. Full table:
 
 A candidate's id is their account's id, so `/auth/me` gives it. Registering is
 `POST /auth/register`.
+
+### Recruiters
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/recruiters/me` | Your recruiter profile: name, title, email |
+| PATCH | `/recruiters/me` | Update your name or title (email excluded) |
+
+A recruiter's profile is created with their account, by the CLI above.
 
 ### Applications
 

@@ -11,6 +11,7 @@ how concurrent writes are kept correct. The migration mechanics are in
 ```mermaid
 erDiagram
     USERS ||--o| CANDIDATES : "profile of (shared id)"
+    USERS ||--o| RECRUITERS : "profile of (shared id)"
     USERS ||--o{ REFRESH_TOKENS : "signed in with"
     JOBS ||--o{ APPLICATIONS : receives
     CANDIDATES ||--o{ APPLICATIONS : submits
@@ -56,6 +57,11 @@ erDiagram
         string full_name "trigram indexed"
         int years_experience
         string resume_url
+    }
+    RECRUITERS {
+        uuid id PK, FK "= users.id"
+        string full_name
+        string title "their own role, e.g. Talent Partner"
     }
     SKILLS {
         int id PK "identity"
@@ -175,7 +181,12 @@ queries, not twenty-one.
 
 ### 2.3 Accounts: one email, one place
 
-Authentication added `users` — email, password hash, role, nothing else. A candidate's
+Authentication added `users`: the account. It holds what identifies a person and lets
+them sign in (email, password hash) and what they may do (role). Everything else about
+them lives on a profile: `candidates` for a candidate, `recruiters` for a recruiter.
+The table is `users`, not `credentials`, because every other table points at the
+person, not at their password — and `credentials` is the name a later table would need,
+with one row per sign-in method (a password, a Google login, a passkey). A candidate's
 email had lived on `candidates`; keeping a copy on both tables would store one fact
 twice, free to drift. It moved to `users`, and the API reads it through the profile's
 relationship to its account.
@@ -195,6 +206,13 @@ stay one-to-one, plus an index. The shared key gets both for free, and makes own
 one comparison: an application is yours when `candidate_id` equals your user id.
 Deleting the account cascades to the profile, its applications and its refresh tokens.
 
+`recruiters` follows the same shape: `recruiters.id` is the primary key and a foreign key
+to `users.id`. One table with every profile column would leave a candidate's
+`resume_url` empty on every recruiter row, and the database could no longer require a
+candidate's fields. What neither profile table checks is the account's role: the
+database would accept a `recruiters` row for a candidate's account. Only the code that
+creates profiles (registration, and the recruiter CLI) guarantees the match.
+
 ## 3. Constraints
 
 The database refuses invalid data itself, whichever client wrote it.
@@ -203,7 +221,7 @@ The database refuses invalid data itself, whichever client wrote it.
 |---|---|
 | `uq_applications_job_candidate` | A candidate applies to a job at most once — holds under concurrency |
 | `uq_users_email` + `ck_users_email_lowercase` | One account per address, case-insensitively (on `candidates` before authentication) |
-| `fk_candidates_id_users` | Every profile belongs to exactly one account |
+| `fk_candidates_id_users`, `fk_recruiters_id_users` | Every profile belongs to exactly one account |
 | `uq_refresh_tokens_token_hash` | A refresh token resolves to one row |
 | `uq_skills_name` + `ck_skills_name_normalised` | One row per skill |
 | `ck_jobs_min_experience_non_negative`, `ck_candidates_years_experience_non_negative` | No negative experience |

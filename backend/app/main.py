@@ -23,6 +23,7 @@ from app.core.schemas import ErrorResponse
 from app.core.temporal import close_temporal_client
 from app.jobs import router as jobs
 from app.publishing import router as publishing
+from app.recruiters import router as recruiters
 from app.skills import router as skills
 
 configure_logging(settings.log_level)
@@ -89,5 +90,8 @@ app.include_router(
 )
 app.include_router(
     applications.router, prefix="/applications", tags=["applications"], dependencies=signed_in
+)
+app.include_router(
+    recruiters.router, prefix="/recruiters", tags=["recruiters"], dependencies=signed_in
 )
 app.include_router(skills.router, prefix="/skills", tags=["skills"], dependencies=signed_in)
