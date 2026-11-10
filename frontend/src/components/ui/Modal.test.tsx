@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { Button } from "./Button";
 import { Modal } from "./Modal";
 
-function Harness() {
+function Harness({ dismissible }: { dismissible?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -14,6 +14,7 @@ function Harness() {
       <Modal
         open={open}
         onClose={() => setOpen(false)}
+        dismissible={dismissible}
         title="Edit job"
         footer={<Button onClick={() => setOpen(false)}>Save</Button>}
       >
@@ -44,6 +45,19 @@ describe("Modal", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+
+  it("when not dismissible, ignores Escape and offers no X; its own buttons still close it", async () => {
+    const user = userEvent.setup();
+    render(<Harness dismissible={false} />);
+    await user.click(screen.getByRole("button", { name: "Open" }));
+
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Edit job" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("keeps Tab inside the dialog, in both directions", async () => {

@@ -10,6 +10,7 @@ import {
 import { Link, NavLink, Outlet, useLocation, useMatches, useNavigate } from "react-router-dom";
 
 import { useAuth, useUser } from "../auth/AuthProvider";
+import { isStaff } from "../auth/roles";
 import { useHotkeys, type Hotkey } from "../hooks/useHotkeys";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useMediaQuery } from "../hooks/useMediaQuery";
@@ -188,7 +189,7 @@ function Sidebar({
 
       <nav className="sidebar-nav" aria-label="Primary">
         <span className="nav-section-label">
-          {user.role === "recruiter" ? "Hiring" : "Your search"}
+          {isStaff(user.role) ? "Hiring" : "Your search"}
         </span>
         {/* The "g …" sequences cannot be written in aria-keyshortcuts, which has no
             notion of a sequence; the rail's tooltip and the shortcuts dialog show them. */}
@@ -397,7 +398,7 @@ export function Layout() {
           </button>
 
           <div className="topbar-right">
-            {user.role === "recruiter" && <HealthBadge />}
+            {isStaff(user.role) && <HealthBadge />}
             <ThemeToggle />
             <UserMenu onShowShortcuts={() => setShortcutsOpen(true)} />
           </div>

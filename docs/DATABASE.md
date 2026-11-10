@@ -13,6 +13,7 @@ erDiagram
     USERS ||--o| CANDIDATES : "profile of (shared id)"
     USERS ||--o| RECRUITERS : "profile of (shared id)"
     USERS ||--o{ REFRESH_TOKENS : "signed in with"
+    USERS ||--o{ INVITATIONS : "invited by link"
     JOBS ||--o{ APPLICATIONS : receives
     CANDIDATES ||--o{ APPLICATIONS : submits
     JOBS ||--o{ JOB_SKILLS : requires
@@ -43,7 +44,8 @@ erDiagram
         uuid id PK
         string email UK "lowercase, checked"
         string password_hash "Argon2id; null = cannot sign in"
-        enum role "recruiter | candidate"
+        enum role "recruiter | candidate | admin"
+        timestamptz deactivated_at "null = active"
     }
     REFRESH_TOKENS {
         uuid id PK
@@ -51,6 +53,13 @@ erDiagram
         string token_hash UK "SHA-256, never the token"
         timestamptz expires_at
         timestamptz revoked_at "set when rotated; sign-out deletes the row"
+    }
+    INVITATIONS {
+        uuid id PK
+        uuid user_id FK
+        string token_hash UK "SHA-256, never the token"
+        timestamptz expires_at
+        uuid created_by FK "the admin; null if removed"
     }
     CANDIDATES {
         uuid id PK, FK "= users.id"
@@ -183,7 +192,8 @@ queries, not twenty-one.
 
 Authentication added `users`: the account. It holds what identifies a person and lets
 them sign in (email, password hash) and what they may do (role). Everything else about
-them lives on a profile: `candidates` for a candidate, `recruiters` for a recruiter.
+them lives on a profile: `candidates` for a candidate, `recruiters` for a recruiter or
+an admin.
 The table is `users`, not `credentials`, because every other table points at the
 person, not at their password — and `credentials` is the name a later table would need,
 with one row per sign-in method (a password, a Google login, a passkey). A candidate's
@@ -223,6 +233,8 @@ The database refuses invalid data itself, whichever client wrote it.
 | `uq_users_email` + `ck_users_email_lowercase` | One account per address, case-insensitively (on `candidates` before authentication) |
 | `fk_candidates_id_users`, `fk_recruiters_id_users` | Every profile belongs to exactly one account |
 | `uq_refresh_tokens_token_hash` | A refresh token resolves to one row |
+| `uq_invitations_token_hash` | An invitation link resolves to one row |
+| `user_role` enum | A role is `RECRUITER`, `CANDIDATE` or `ADMIN` — nothing else |
 | `uq_skills_name` + `ck_skills_name_normalised` | One row per skill |
 | `ck_jobs_min_experience_non_negative`, `ck_candidates_years_experience_non_negative` | No negative experience |
 | `ck_jobs_max_applications_positive` | A cap, if set, is at least 1 |
@@ -253,10 +265,15 @@ around the queries the services actually run.
 | `uq_users_email` | Every sign-in: `WHERE email = ?` |
 | `uq_refresh_tokens_token_hash` | Every refresh and sign-out: `WHERE token_hash = ?` |
 | `ix_refresh_tokens_user_id` | Revoking all of a user's sessions, and `ON DELETE CASCADE` from `users` — without it, both scan the table |
+| `uq_invitations_token_hash` | Opening and accepting a link: `WHERE token_hash = ?` |
+| `ix_invitations_user_id` | Replacing or deleting a person's links, the team page's expiry lookup, and the cascade from `users` |
 
-Authentication added three indexes and no more. Two come with unique constraints that
-must exist anyway; the third serves a foreign key that is deleted through. Nothing is
-indexed on `role` or `expires_at`: no query filters on them.
+Authentication added three indexes and no more; invitations two more of the same kinds.
+Each comes with a unique constraint that must exist anyway, or serves a foreign key that
+is deleted through. Nothing is indexed on `role`, `deactivated_at` or `expires_at`: no
+query filters on them. (`invitations.created_by` is not indexed either: nothing looks
+invitations up by admin, and admins are deactivated, not deleted, so its `SET NULL`
+cascade practically never runs.)
 
 ### 4.1 What changed, and why
 

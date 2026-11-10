@@ -2,12 +2,14 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import type { Role } from "../api/types";
 import { useUser } from "../auth/AuthProvider";
+import { isStaff } from "../auth/roles";
 import { NAV_ITEMS, ROLE_HOME } from "../components/navigation";
 import { Button, ButtonLink, Icon, Shortcut } from "../components/ui";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 const HOME_LABEL: Record<Role, string> = {
   recruiter: "Go to the dashboard",
+  admin: "Go to the dashboard",
   candidate: "Go home",
 };
 
@@ -68,7 +70,7 @@ export function NotFoundPage() {
         <Icon name="search" />
         <span>
           Looking for something specific? Press <Shortcut combo="mod+k" /> to search{" "}
-          {user.role === "recruiter" ? "jobs, candidates and pages" : "open jobs and pages"}.
+          {isStaff(user.role) ? "jobs, candidates and pages" : "open jobs and pages"}.
         </span>
       </p>
     </section>

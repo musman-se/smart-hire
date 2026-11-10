@@ -3,6 +3,7 @@ import { matchPath, useLocation } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
 import { useUser } from "../../auth/AuthProvider";
+import { isStaff } from "../../auth/roles";
 import { useCandidate, useJob } from "../../hooks/queries";
 import { humanize } from "../ui";
 import type { RecentItem, RecentItems, RecentKind } from "./recent";
@@ -28,7 +29,7 @@ export function RecentTracker({ remember, forget }: TrackerProps) {
   if (jobId && jobId !== "new") {
     return <TrackJob id={jobId} remember={remember} forget={forget} />;
   }
-  if (candidateId && user.role === "recruiter") {
+  if (candidateId && isStaff(user.role)) {
     return <TrackCandidate id={candidateId} remember={remember} forget={forget} />;
   }
   return null;

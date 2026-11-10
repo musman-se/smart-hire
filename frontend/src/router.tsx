@@ -18,6 +18,7 @@ function lazyPage<K extends string>(load: () => Promise<Record<K, ComponentType>
 
 const LoginPage = lazyPage(() => import("./pages/LoginPage"), "LoginPage");
 const RegisterPage = lazyPage(() => import("./pages/RegisterPage"), "RegisterPage");
+const InvitePage = lazyPage(() => import("./pages/InvitePage"), "InvitePage");
 const DashboardPage = lazyPage(() => import("./pages/recruiter/DashboardPage"), "DashboardPage");
 const CandidateHomePage = lazyPage(() => import("./pages/candidate/HomePage"), "CandidateHomePage");
 const JobsPage = lazyPage(() => import("./pages/JobsPage"), "JobsPage");
@@ -38,6 +39,7 @@ const MyApplicationsPage = lazyPage(
   "MyApplicationsPage",
 );
 const ProfilePage = lazyPage(() => import("./pages/ProfilePage"), "ProfilePage");
+const TeamPage = lazyPage(() => import("./pages/admin/TeamPage"), "TeamPage");
 const NotFoundPage = lazyPage(() => import("./pages/NotFoundPage"), "NotFoundPage");
 
 /** The signed-out pages have no shell around them to hold a Suspense boundary. */
@@ -45,7 +47,9 @@ function Standalone({ children }: { children: ReactNode }) {
   return <Suspense fallback={<PageLoader />}>{children}</Suspense>;
 }
 
-const recruiterOnly = (page: ReactNode) => <RequireRole role="recruiter">{page}</RequireRole>;
+/** The hiring side: recruiters and admins. */
+const staffOnly = (page: ReactNode) => <RequireRole role="staff">{page}</RequireRole>;
+const adminOnly = (page: ReactNode) => <RequireRole role="admin">{page}</RequireRole>;
 const candidateOnly = (page: ReactNode) => <RequireRole role="candidate">{page}</RequireRole>;
 
 /** The route map. Pages render inside Layout's Suspense and per-route ErrorBoundary. */
@@ -69,6 +73,17 @@ export const router = createBrowserRouter([
     errorElement: <RouteErrorPage />,
   },
   {
+    // Public: whoever opens an invitation link has no password yet. The token rides
+    // in the fragment (/invite#…), which browsers never send to a server.
+    path: "/invite",
+    element: (
+      <Standalone>
+        <InvitePage />
+      </Standalone>
+    ),
+    errorElement: <RouteErrorPage />,
+  },
+  {
     path: "/",
     element: (
       <RequireAuth>
@@ -78,25 +93,25 @@ export const router = createBrowserRouter([
     errorElement: <RouteErrorPage />,
     children: [
       { index: true, element: <RoleHome /> },
-      { path: "dashboard", element: recruiterOnly(<DashboardPage />) },
+      { path: "dashboard", element: staffOnly(<DashboardPage />) },
       { path: "home", element: candidateOnly(<CandidateHomePage />) },
 
       { path: "jobs", element: <JobsPage /> },
-      { path: "jobs/new", element: recruiterOnly(<JobEditorPage />) },
+      { path: "jobs/new", element: staffOnly(<JobEditorPage />) },
       { path: "jobs/:jobId", element: <JobDetailPage /> },
-      { path: "jobs/:jobId/edit", element: recruiterOnly(<JobEditorPage />) },
+      { path: "jobs/:jobId/edit", element: staffOnly(<JobEditorPage />) },
       {
         path: "jobs/:jobId/pipeline",
-        element: recruiterOnly(<PipelinePage />),
+        element: staffOnly(<PipelinePage />),
         handle: { wide: true } satisfies RouteHandle,
       },
 
-      { path: "candidates", element: recruiterOnly(<CandidatesPage />) },
+      { path: "candidates", element: staffOnly(<CandidatesPage />) },
       {
         path: "candidates/:candidateId",
         // A candidate's own record is their applications page.
         element: (
-          <RequireRole role="recruiter" redirectTo="/applications">
+          <RequireRole role="staff" redirectTo="/applications">
             <CandidateDetailPage />
           </RequireRole>
         ),
@@ -104,9 +119,10 @@ export const router = createBrowserRouter([
 
       {
         path: "applications",
-        element: <RoleSwitch recruiter={<ApplicationsPage />} candidate={<MyApplicationsPage />} />,
+        element: <RoleSwitch staff={<ApplicationsPage />} candidate={<MyApplicationsPage />} />,
       },
       { path: "profile", element: <ProfilePage /> },
+      { path: "team", element: adminOnly(<TeamPage />) },
       { path: "*", element: <NotFoundPage /> },
     ],
   },

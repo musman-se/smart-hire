@@ -89,6 +89,9 @@ class Settings(BaseSettings):
     # Threads that hash passwords (Argon2id: ~0.1 s of CPU and 64 MiB each). Sign-ins
     # beyond this many at once queue rather than take more CPU and memory.
     password_hash_workers: int = Field(default=4, ge=1, le=32)
+    # How long an admin's invitation link stays usable. The new recruiter sets their own
+    # password through it, so it is as sensitive as a password-reset link.
+    invitation_ttl_hours: int = Field(default=72, ge=1, le=720)
 
     # --- Temporal (workflow orchestration) ------------------------------------------
     # host:port of the Temporal server's gRPC frontend. Compose overrides it to

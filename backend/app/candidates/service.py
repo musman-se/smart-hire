@@ -9,11 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.enums import Role
 from app.auth.errors import DuplicateEmailError
-from app.auth.models import User
+from app.auth.models import EMAIL_UNIQUE, User
 from app.auth.security import hash_password
 from app.candidates.errors import CandidateNotFoundError
 from app.candidates.models import Candidate
 from app.candidates.schemas import CandidateRegistration, CandidateUpdate
+from app.core.db import violated_constraint
 from app.skills.models import Skill
 from app.skills.service import resolve_skills
 
@@ -95,6 +96,8 @@ async def register_candidate(session: AsyncSession, payload: CandidateRegistrati
         # SELECT-then-INSERT check would let two concurrent registrations both pass the
         # check and race.
         await session.rollback()
+        if violated_constraint(exc) != EMAIL_UNIQUE:
+            raise
         # The message names no email: domain errors are logged, and an address is
         # personal data.
         raise DuplicateEmailError("An account with this email already exists.") from exc

@@ -8,6 +8,7 @@ from collections.abc import AsyncGenerator
 from typing import Annotated
 
 from fastapi import Depends
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
@@ -25,6 +26,17 @@ engine = create_async_engine(
 )
 
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+
+def violated_constraint(exc: IntegrityError) -> str | None:
+    """The name of the constraint an IntegrityError broke, as Postgres reported it.
+
+    A service that turns a violation into a domain error ("that email is taken") must
+    check it is the constraint it means: a CHECK or a foreign key failing in the same
+    statement is a different problem, and should not be reported as that one. asyncpg's
+    own exception, which carries the name, is the driver error's cause.
+    """
+    return getattr(getattr(exc.orig, "__cause__", None), "constraint_name", None)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession]:

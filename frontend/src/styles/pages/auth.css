@@ -331,6 +331,14 @@
   vertical-align: text-bottom;
 }
 
+/* ---------- invitation: while the link is checked ---------- */
+
+.invite-loading {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-12) 0;
+}
+
 /* ---------- registration: who is signing up, on the profile step ---------- */
 
 .auth-summary {

@@ -7,10 +7,11 @@
 
 import type { Candidate, CandidateUpdate } from "../../api/types";
 import { looksLikePhone } from "../../lib/phone";
+import { FULL_NAME_LIMITS } from "../auth/validation";
 
 export const LIMITS = {
-  fullNameMin: 2,
-  fullNameMax: 160,
+  fullNameMin: FULL_NAME_LIMITS.min,
+  fullNameMax: FULL_NAME_LIMITS.max,
   headlineMax: 200,
   phoneMax: 32,
   yearsMax: 60,

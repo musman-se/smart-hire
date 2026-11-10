@@ -2,6 +2,13 @@
 export type FieldErrors<K extends string> = Partial<Record<K, string>>;
 
 /**
+ * A person's full name, wherever one is entered: registration, the candidate profile
+ * and an admin adding a recruiter. Mirrors FULL_NAME_MAX_LENGTH and the minimum in the
+ * backend (app/recruiters/models.py, app/candidates/schemas.py).
+ */
+export const FULL_NAME_LIMITS = { min: 2, max: 160 } as const;
+
+/**
  * Length the way the API counts it. Pydantic measures a Python str in code points,
  * while a JS string's .length counts UTF-16 units, so an emoji would count twice here
  * and a valid value could be refused before it ever reached the server.

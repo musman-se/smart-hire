@@ -5,7 +5,8 @@ error, and so are a forged token, an expired one and one for a deleted user: eac
 distinction a client could branch on is one an attacker could probe for.
 """
 
-from app.core.errors import ConflictError, ForbiddenError, UnauthorizedError
+from app.auth.enums import Role, with_article
+from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 
 
 class DuplicateEmailError(ConflictError):
@@ -54,6 +55,28 @@ class InvalidCurrentPasswordError(ForbiddenError):
         super().__init__("The current password is incorrect.")
 
 
+class AccountDeactivatedError(ForbiddenError):
+    """The password was right, but an admin has deactivated the account. Said only after
+    the password is proved, so it reveals nothing to someone guessing emails."""
+
+    code = "account_deactivated"
+
+    def __init__(self) -> None:
+        super().__init__("This account has been deactivated. Ask your admin to reactivate it.")
+
+
+class InvalidInvitationError(NotFoundError):
+    """Unknown, expired or already used — one answer for all three, as for tokens."""
+
+    code = "invalid_invitation"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "This invitation link is invalid, expired or already used. "
+            "Ask your admin for a new one."
+        )
+
+
 class RoleRequiredError(ForbiddenError):
-    def __init__(self, role: str) -> None:
-        super().__init__(f"Only a {role} can do this.")
+    def __init__(self, role: Role) -> None:
+        super().__init__(f"Only {with_article(role)} can do this.")

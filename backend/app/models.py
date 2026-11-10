@@ -13,7 +13,7 @@ background worker — imports this module first.
 """
 
 from app.applications.models import Application, ApplicationStageChange
-from app.auth.models import RefreshToken, User
+from app.auth.models import Invitation, RefreshToken, User
 from app.candidates.models import Candidate
 from app.core.models import Base
 from app.jobs.models import Job
@@ -27,6 +27,7 @@ __all__ = [
     "ApplicationStageChange",
     "Base",
     "Candidate",
+    "Invitation",
     "Job",
     "JobKeyword",
     "JobSection",

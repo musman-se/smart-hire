@@ -273,7 +273,7 @@ Expand **Servers → SmartHire** (it asks once for `POSTGRES_PASSWORD` from `.en
 | Which revision the database is at (§2) | **Tables → `alembic_version`** → right-click → *View/Edit Data*. Or **Tools → Query Tool**: `SELECT version_num FROM alembic_version;` |
 | What a revision created | A table's **Columns**, **Constraints** and **Indexes**. Every name follows the convention in §5 (`pk_`, `fk_`, `uq_`, `ck_`, `ix_`), so `fk_candidates_id_users` reads as "candidates.id references users" |
 | The DDL behind a table | Right-click a table → *Scripts → CREATE Script*. Compare it with the revision that made it in `backend/migrations/versions/` |
-| The enum types | **Types**: `job_status`, `application_stage`, `employment_type`, `job_section_kind`, `user_role` |
+| The enum types | **Types**: `job_status`, `application_stage`, `employment_type`, `job_section_kind`, `user_role`. Their values: Query Tool, `SELECT enum_range(NULL::user_role);` |
 | A data migration's result (§6) | *View/Edit Data* on `skills`, or on `users` — every candidate from before authentication has a row there with a NULL `password_hash` |
 
 **The tables worth opening**, roughly in the order a request touches them:
@@ -283,6 +283,7 @@ Expand **Servers → SmartHire** (it asks once for `POSTGRES_PASSWORD` from `.en
 | `users` | Accounts: email, Argon2id hash, role |
 | `candidates`, `recruiters` | Profiles, one table per role; `id` is also the account's `users.id` |
 | `refresh_tokens` | One row per live or rotated refresh token — a SHA-256, never the token |
+| `invitations` | One row per invitation link that still works — a SHA-256, never the token |
 | `jobs` | Postings and their lifecycle status |
 | `skills`, `job_skills`, `candidate_skills` | The skill vocabulary and who lists what |
 | `job_sections`, `job_keywords`, `job_extracted_skills` | What the publishing workflow extracted |

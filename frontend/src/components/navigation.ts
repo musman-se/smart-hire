@@ -17,12 +17,19 @@ export interface NavItem {
   keywords?: string;
 }
 
+const RECRUITER_NAV: readonly NavItem[] = [
+  { to: "/dashboard", label: "Dashboard", icon: "dashboard", shortcut: "g d", keywords: "home overview" },
+  { to: "/jobs", label: "Jobs", icon: "briefcase", shortcut: "g j", keywords: "postings roles" },
+  { to: "/applications", label: "Applications", icon: "inbox", shortcut: "g a", keywords: "review queue" },
+  { to: "/candidates", label: "Candidates", icon: "users", shortcut: "g c", keywords: "people talent" },
+];
+
 export const NAV_ITEMS: Record<Role, readonly NavItem[]> = {
-  recruiter: [
-    { to: "/dashboard", label: "Dashboard", icon: "dashboard", shortcut: "g d", keywords: "home overview" },
-    { to: "/jobs", label: "Jobs", icon: "briefcase", shortcut: "g j", keywords: "postings roles" },
-    { to: "/applications", label: "Applications", icon: "inbox", shortcut: "g a", keywords: "review queue" },
-    { to: "/candidates", label: "Candidates", icon: "users", shortcut: "g c", keywords: "people talent" },
+  recruiter: RECRUITER_NAV,
+  // An admin is a recruiter who also manages the hiring team.
+  admin: [
+    ...RECRUITER_NAV,
+    { to: "/team", label: "Team", icon: "user-plus", shortcut: "g t", keywords: "recruiters staff invite people" },
   ],
   candidate: [
     { to: "/home", label: "Home", icon: "home", shortcut: "g h", keywords: "dashboard overview" },
@@ -42,6 +49,7 @@ export const GLOBAL_SHORTCUTS = [
 /** Where "home" is for each role — the landing page after sign-in. */
 export const ROLE_HOME: Record<Role, string> = {
   recruiter: "/dashboard",
+  admin: "/dashboard",
   candidate: "/home",
 };
 

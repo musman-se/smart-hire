@@ -513,18 +513,20 @@ would have been worse: nobody would know them.
 ### 4.25 Secure by default; roles at the boundary; 404 for other people's data
 
 **Decision.** `main.py` mounts every domain router with `get_current_user` as a
-router-level dependency. Routes then narrow by role (`RecruiterDep`, `CandidateDep`).
-Only the health probes and `/auth/register|login|refresh|logout` are public, and a test
-sends a request with no token to every other operation in the OpenAPI document.
+router-level dependency. Routes then narrow by role (`RecruiterDep`, `AdminDep`,
+`CandidateDep`). Only the health probes, `/auth/register|login|refresh|logout` and the
+two invitation endpoints are public, and a test sends a request with no token to every
+other operation in the OpenAPI document.
 
-| | Recruiter | Candidate |
-|---|---|---|
-| Jobs | everything | read published jobs, and closed ones they applied to |
-| Publishing status, extracted content | yes | — |
-| Candidates | read all | read, edit, delete their own |
-| Recruiter profile | read and edit their own | — |
-| Apply | — | as themselves |
-| Applications | read all, advance, re-process | read their own — without the match score or the recruiter's notes — and withdraw |
+| | Admin | Recruiter | Candidate |
+|---|---|---|---|
+| Jobs | as a recruiter | everything | read published jobs, and closed ones they applied to |
+| Publishing status, extracted content | yes | yes | — |
+| Candidates | as a recruiter | read all | read, edit, delete their own |
+| Own staff profile (`/recruiters/me`) | read and edit | read and edit | — |
+| The hiring team (`/recruiters`) | list, invite, deactivate, reactivate | — | — |
+| Apply | — | — | as themselves |
+| Applications | as a recruiter | read all, advance, re-process | read their own — without the match score or the recruiter's notes — and withdraw |
 
 **Why.** Protection declared once cannot be forgotten on the next endpoint; protection
 added route by route eventually is. Role checks sit in the routers because *who may ask*
@@ -551,17 +553,20 @@ lookup — in exchange for deletions and role changes taking effect at once.
 `/auth/register` takes no Idempotency-Key: the record stores a hash of the body for a
 day, and a fast hash of a password is not something to keep in a cache.
 
-### 4.26 Recruiters are created from the command line
+### 4.26 The first admin is created from the command line
 
-**Decision.** Candidates register themselves over HTTP. Recruiter accounts are created
-with `python -m app.auth.cli create-recruiter <email> --name "<full name>"`, which
-prompts for the password (or reads it from stdin, for scripts) and creates the
-recruiter's profile with the account. The seed service runs it before seeding.
+**Decision.** Candidates register themselves over HTTP. Staff never do. The first admin
+of an installation is created with `python -m app.auth.cli create-admin <email> --name
+"<full name>"`, which prompts for the password (or reads it from stdin, for scripts) and
+creates the profile with the account. From then on admins add recruiters from the
+console (§4.28). `create-recruiter` remains, for scripts and the demo seed, which runs
+both before seeding.
 
-**Why.** An HTTP sign-up for recruiters would let anyone grant themselves every job and
-candidate, and the first recruiter could never be created through an endpoint only
-recruiters may call. Whoever can run a command on the server is already trusted.
-`--exist-ok` never promotes an existing account, resets a password or renames anyone.
+**Why.** An HTTP sign-up for staff would let anyone grant themselves every job and
+candidate, and the first admin could never be created through an endpoint only admins
+may call. Whoever can run a command on the server is already trusted — and it is needed
+once per installation, as for Grafana's or GitLab's first administrator. `--exist-ok`
+never changes an existing account's role, resets a password or renames anyone.
 
 ### 4.27 Recruiters have a profile of their own
 
@@ -591,11 +596,63 @@ create profiles, and each sets the matching role. A composite foreign key on
 `(id, role)` would let the database enforce it, at the cost of a `role` column on each
 profile.
 
+Admins (§4.28) are staff too, and their profile is a `recruiters` row as well: the
+table holds the hiring team, whatever their role on it.
+
+### 4.28 Admins run the hiring team: invitations and deactivation
+
+**Decision.** A third role, `admin`. An admin does everything a recruiter does — every
+recruiter check (`require_recruiter`) accepts both — and also manages the team at
+`/recruiters`: lists everyone, adds a recruiter, issues a new invitation link, and
+deactivates or reactivates people.
+
+- **Adding a recruiter** creates the account and profile with **no password**, plus an
+  invitation: 256 random bits, of which `invitations` keeps only a SHA-256, valid for
+  `INVITATION_TTL_HOURS` (72). The token is returned once. The console turns it into
+  `/invite#<token>` for the admin to send however they like; the recruiter opens it,
+  chooses a password (`POST /auth/invitations/accept`) and is signed in. A link works
+  once; a new one replaces the old.
+- **Deactivating** sets `users.deactivated_at`. Sign-in answers `403 account_deactivated`
+  (only after the password is proved, so it reveals nothing to someone guessing);
+  `get_current_user` refuses the account's access tokens at once; its refresh tokens and
+  invitation links are deleted. Reactivating clears the column. An admin cannot
+  deactivate themself.
+
+**Alternatives rejected.**
+- *Any recruiter may add recruiters* — then everyone with access can hand out access,
+  and the company loses control of who sees every candidate.
+- *The admin types a temporary password* — the admin then knows it, and it travels in
+  chat. With a link, nobody but the recruiter ever knows their password.
+- *Email the link from the server* — the project has no email channel yet; the admin
+  sends it instead. When one exists, the same token goes in the email.
+- *Delete leavers* — their name would vanish from what they did, and a mistake could not
+  be undone.
+
+**Why the token travels as it does.** In the request body, never the URL, so it stays
+out of server and proxy logs; after a `#` in the console's link, which browsers never
+send to a server. Like a refresh token, a fast hash is right: the token cannot be guessed.
+
+**Concurrency.** The team always keeps an admin. An admin cannot deactivate themself,
+and every team change takes one advisory lock (`pg_advisory_xact_lock`) and re-reads the
+acting admin under it: of two admins deactivating each other at once, the second finds
+its admin already deactivated and is refused (`account_deactivated`). Every path that
+changes an account's access locks its rows in one order — refresh tokens, invitations,
+then the user (`auth.service.lock_account`) — so deactivating cannot deadlock with a
+refresh or an accepted invitation; a test reproduces the deadlock the old order caused.
+Sign-in re-reads the account under the user's lock after the password hash, so a
+deactivation during that tenth of a second leaves no refresh token behind.
+
+**Tradeoff.** An admin can deactivate another admin. Roles cannot be changed from the
+console — promoting a recruiter to admin is a later feature. No rate limit on the
+public invitation endpoints (see Gaps).
+
 ## 5. Gaps
 
 | Gap | Status / where it belongs |
 |---|---|
 | ~~**No authentication** — every endpoint is open~~ | Fixed after review — §4.22–4.26 |
+| ~~Recruiters could only be added from the server's command line~~ | Fixed — admins invite them from the console (§4.28) |
+| Roles cannot be changed from the console (promote a recruiter to admin) | A later admin feature; the CLI creates admins today |
 | ~~No way to change a password~~ | Fixed — `POST /auth/change-password` needs the current password, ends every session, returns a new pair |
 | No password reset ("forgot password") or email verification; pre-auth candidates cannot sign in | Needs an email channel — Module 3; the notifications table is the seam |
 | An access token outlives sign-out by up to 15 minutes | By design (§4.22); a deny-list in Redis if it ever matters |

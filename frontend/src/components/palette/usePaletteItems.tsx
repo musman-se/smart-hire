@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useAuth, useUser } from "../../auth/AuthProvider";
+import { isStaff } from "../../auth/roles";
 import { useApplications } from "../../hooks/queries";
 import { useGlobalSearch, type GlobalSearch } from "../../hooks/useGlobalSearch";
 import { useTheme, type ThemePreference } from "../../hooks/useTheme";
@@ -61,7 +62,7 @@ export function usePaletteItems({
   const navigate = useNavigate();
   const { preference, resolved, setPreference } = useTheme();
   const search = useGlobalSearch(query);
-  const recruiter = user.role === "recruiter";
+  const recruiter = isStaff(user.role);
 
   // One limit=1 read: the total is the size of the "applied" queue.
   const { data: newApplications } = useApplications(

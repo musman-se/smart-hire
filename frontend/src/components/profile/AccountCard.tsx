@@ -1,4 +1,5 @@
 import type { User } from "../../api/types";
+import { isStaff } from "../../auth/roles";
 import { Badge, Card, CardHeader, CopyButton, formatDate, formatRelative, humanize } from "../ui";
 
 /** Sign-in identity: read-only here, since changing an email needs a verification
@@ -19,7 +20,7 @@ export function AccountCard({ user }: { user: User }) {
         </dd>
         <dt>Role</dt>
         <dd>
-          <Badge tone={user.role === "recruiter" ? "violet" : "accent"}>{humanize(user.role)}</Badge>
+          <Badge tone={isStaff(user.role) ? "violet" : "accent"}>{humanize(user.role)}</Badge>
         </dd>
         <dt>Member since</dt>
         <dd>

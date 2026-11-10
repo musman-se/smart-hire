@@ -142,3 +142,11 @@ def new_refresh_token() -> str:
 
 def hash_refresh_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+# --- Invitation tokens -----------------------------------------------------------------
+# The same construction as a refresh token, for the same reasons: 256 random bits, of
+# which the database keeps only a SHA-256.
+
+new_invitation_token = new_refresh_token
+hash_invitation_token = hash_refresh_token

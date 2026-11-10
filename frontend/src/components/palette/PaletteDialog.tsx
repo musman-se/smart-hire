@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode 
 import { createPortal } from "react-dom";
 
 import { useUser } from "../../auth/AuthProvider";
+import { isStaff } from "../../auth/roles";
 import { MIN_SEARCH_LENGTH } from "../../hooks/useGlobalSearch";
 import { Avatar, Icon, Kbd, Shortcut, Spinner, pluralize, rovingIndex, useOverlay } from "../ui";
 import { Highlight } from "./Highlight";
@@ -67,7 +68,7 @@ export function PaletteDialog({ recent, onClose, onShowShortcuts }: PaletteDialo
   const trimmed = query.trim();
   const searching = search.jobs.loading || search.candidates.loading;
   const tooShort = trimmed.length > 0 && trimmed.length < MIN_SEARCH_LENGTH;
-  const recruiter = user.role === "recruiter";
+  const recruiter = isStaff(user.role);
   const scope = recruiter ? "jobs and candidates" : "open jobs";
 
   const statusFor: Partial<Record<PaletteGroup, ReactNode>> = {

@@ -50,6 +50,24 @@ describe("LoginPage", () => {
     expect(screen.queryByText(/513dd5d4/)).not.toBeInTheDocument();
   });
 
+  it("tells a deactivated user who can let them back in", async () => {
+    signIn.mockRejectedValue(
+      new ApiError(
+        403,
+        "account_deactivated",
+        "This account has been deactivated. Ask your admin to reactivate it.",
+        "d3ac71ff",
+      ),
+    );
+    renderLogin();
+    await submit("sara@example.com", "right-password");
+
+    expect(await screen.findByText("This account has been deactivated")).toBeInTheDocument();
+    expect(screen.getByText(/Ask your admin to reactivate it/)).toBeInTheDocument();
+    expect(screen.queryByText("The email or password is incorrect.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/d3ac71ff/)).not.toBeInTheDocument();
+  });
+
   it("keeps the support reference for a real failure", async () => {
     signIn.mockRejectedValue(new ApiError(500, "internal_error", "Something went wrong", "c0ffee12"));
     renderLogin();

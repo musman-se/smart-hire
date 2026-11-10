@@ -13,6 +13,7 @@ import { useMemo } from "react";
 import { candidatesApi, jobsApi } from "../api/resources";
 import type { Candidate, Job, Page } from "../api/types";
 import { useUser } from "../auth/AuthProvider";
+import { isStaff } from "../auth/roles";
 import { keys } from "./queries";
 import { useDebouncedValue } from "./useDebouncedValue";
 
@@ -72,7 +73,7 @@ export function useGlobalSearch(query: string): GlobalSearch {
   const settling = typed !== term;
 
   const searchJobs = typed.length >= MIN_SEARCH_LENGTH;
-  const searchCandidates = searchJobs && user.role === "recruiter";
+  const searchCandidates = searchJobs && isStaff(user.role);
   // The settled term can lag behind a query that just became long enough.
   const termReady = term.length >= MIN_SEARCH_LENGTH;
   const filters = { search: term, limit: SEARCH_RESULT_LIMIT };

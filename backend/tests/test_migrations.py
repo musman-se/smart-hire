@@ -316,3 +316,29 @@ def test_existing_recruiters_get_a_profile_named_from_their_email(
     command.downgrade(alembic_config, "81276ef5beaf")
 
     assert _query("SELECT count(*) FROM users") == [(3,)]
+
+
+def test_downgrading_the_admin_role_turns_admins_back_into_recruiters(
+    alembic_config: Config,
+) -> None:
+    """6b2d9e4f1a83 adds ADMIN to user_role. Postgres cannot drop an enum value, so the
+    downgrade rebuilds the type — and must first move admins to a value that survives."""
+    command.upgrade(alembic_config, "6b2d9e4f1a83")
+    _query(
+        """
+        INSERT INTO users (id, email, role, deactivated_at) VALUES
+            ('00000000-0000-0000-0000-000000000017', 'owner@example.com', 'ADMIN', NULL),
+            ('00000000-0000-0000-0000-000000000018', 'left@example.com', 'RECRUITER', now())
+        """
+    )
+
+    command.downgrade(alembic_config, "45e197ff436b")
+
+    assert _query("SELECT email, role::text FROM users ORDER BY email") == [
+        ("left@example.com", "RECRUITER"),
+        ("owner@example.com", "RECRUITER"),
+    ]
+    assert _query("SELECT enum_range(NULL::user_role)::text") == [("{RECRUITER,CANDIDATE}",)]
+
+    command.upgrade(alembic_config, "6b2d9e4f1a83")
+    assert _query("SELECT enum_range(NULL::user_role)::text") == [("{RECRUITER,CANDIDATE,ADMIN}",)]

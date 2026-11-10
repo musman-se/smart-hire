@@ -76,6 +76,10 @@ export const keys = {
 
   skills: (search: string) => ["skills", search.trim().toLowerCase()] as const,
 
+  /** The admin's team page. */
+  team: ["team"] as const,
+  teamList: (filters: { limit: number; offset: number }) => ["team", "list", filters] as const,
+
   readiness: ["health", "ready"] as const,
 };
 
