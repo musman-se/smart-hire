@@ -1,7 +1,10 @@
 """Test fixtures.
 
-These tests run against a real PostgreSQL instance, in a separate `smarthire_test`
-database that is created on demand; its tables are dropped at the end.
+These tests run against a real PostgreSQL instance, in a database of their own that is
+created fresh for each run and dropped at the end: `smarthire_test_<process id>`. One
+per run, because the checkout is often shared — two runs in one database truncated and
+dropped each other's tables mid-run. Fresh, because create_all only adds what is
+missing: a table or enum left behind by another branch would otherwise linger.
 
 Using the real database rather than SQLite is deliberate. The rules this suite exists to
 prove — the unique constraint on (job_id, candidate_id), array containment, native enum
@@ -13,6 +16,7 @@ failing noisily.
 """
 
 import asyncio
+import os
 import uuid
 from collections.abc import AsyncGenerator, Iterator
 
@@ -42,14 +46,37 @@ from app.publishing.publisher import get_job_publisher
 from tests.factories import TEST_PASSWORD
 from tests.fakes import InlineApplicationProcessor, InlineJobPublisher
 
-TEST_DB_NAME = settings.test_database_name
-
 
 def _swap_database(url: str, name: str) -> str:
     """Replace the database name in a SQLAlchemy URL, keeping credentials and host."""
     base, _, _ = url.rpartition("/")
     return f"{base}/{name}"
 
+
+def _database_of(url: str) -> str:
+    return url.rpartition("/")[2].split("?")[0]
+
+
+# Every test truncates tables, and the session ends by dropping the database: pointed
+# at the development database or the app's Redis by mistake, that would wipe them.
+if settings.test_database_name == _database_of(settings.database_url):
+    pytest.exit(
+        f"TEST_DATABASE_NAME is the application's own database ({settings.test_database_name})."
+        " Tests drop it at the end; choose another name.",
+        returncode=2,
+    )
+if settings.test_redis_url == settings.redis_url:
+    pytest.exit(
+        "TEST_REDIS_URL is the application's Redis. Tests flush it; use another database "
+        "number (the default is /15).",
+        returncode=2,
+    )
+
+# Set before any test module reads it (pytest imports conftest first), so
+# test_migrations.py, which derives its own database from this name, is per-run too.
+_TEST_DB_BASE = settings.test_database_name
+settings.test_database_name = f"{_TEST_DB_BASE}_{os.getpid()}"
+TEST_DB_NAME = settings.test_database_name
 
 TEST_DATABASE_URL = _swap_database(settings.database_url, TEST_DB_NAME)
 ADMIN_DATABASE_URL = _swap_database(settings.database_url, "postgres")
@@ -76,12 +103,23 @@ async def engine() -> AsyncGenerator:
 
     try:
         async with admin.connect() as conn:
-            exists = await conn.scalar(
-                text("SELECT 1 FROM pg_database WHERE datname = :name"),
-                {"name": TEST_DB_NAME},
+            # Databases left by runs that were killed before their teardown: the same
+            # name pattern, and nobody connected. A live run always holds connections to
+            # its own, so it is never touched.
+            leftovers = await conn.scalars(
+                text(
+                    "SELECT datname FROM pg_database WHERE datname ~ :pattern "
+                    "AND datname <> :mine AND datname NOT IN "
+                    "(SELECT datname FROM pg_stat_activity WHERE datname IS NOT NULL)"
+                ),
+                {"pattern": f"^{_TEST_DB_BASE}_[0-9]+(_migrations)?$", "mine": TEST_DB_NAME},
             )
-            if not exists:
-                await conn.execute(text(f'CREATE DATABASE "{TEST_DB_NAME}"'))
+            for leftover in list(leftovers):
+                await conn.execute(text(f'DROP DATABASE IF EXISTS "{leftover}"'))
+            # A leftover of a killed run that had this process id gets replaced, not
+            # reused: the schema must be exactly what the models say.
+            await conn.execute(text(f'DROP DATABASE IF EXISTS "{TEST_DB_NAME}" WITH (FORCE)'))
+            await conn.execute(text(f'CREATE DATABASE "{TEST_DB_NAME}"'))
     except Exception as exc:  # noqa: BLE001 - any connection failure means "no database"
         await admin.dispose()
         pytest.skip(f"PostgreSQL unreachable ({type(exc).__name__}). Run: docker compose up -d db")
@@ -98,18 +136,28 @@ async def engine() -> AsyncGenerator:
 
     yield test_engine
 
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
     await test_engine.dispose()
+    admin = create_async_engine(ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT")
+    try:
+        async with admin.connect() as conn:
+            await conn.execute(text(f'DROP DATABASE IF EXISTS "{TEST_DB_NAME}" WITH (FORCE)'))
+    finally:
+        await admin.dispose()
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def clean_tables(engine) -> AsyncGenerator[None]:
-    """Empty every table before each test so ordering cannot matter.
+async def clean_tables(request: pytest.FixtureRequest) -> AsyncGenerator[None]:
+    """Empty every table before each test that uses the database, so ordering cannot
+    matter. A test that never asks for the database (scoring, content analysis) skips
+    this — and so runs, rather than skipping, when Postgres is down.
 
     TRUNCATE ... CASCADE is far faster than deleting rows, and resets the tables in one
     statement regardless of foreign keys.
     """
+    if "engine" not in request.fixturenames:
+        yield
+        return
+    engine = request.getfixturevalue("engine")
     async with engine.begin() as conn:
         await conn.execute(
             text(

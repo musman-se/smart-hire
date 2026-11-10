@@ -35,6 +35,7 @@ from app.core.errors import ForbiddenError
 from app.core.idempotency import IdempotencyDep, IdempotencyKey
 from app.core.pagination import Page, PaginationDep
 from app.core.schemas import ErrorResponse
+from app.jobs.service import get_job
 from app.notifications import service as notification_service
 from app.notifications.schemas import NotificationRead
 
@@ -122,6 +123,9 @@ async def list_job_applications(
     job_id: uuid.UUID,
     stage: Annotated[ApplicationStage | None, Query()] = None,
 ) -> Page[ApplicationRead]:
+    # 404 for a job that does not exist, as every other /jobs/{job_id} route answers —
+    # not an empty page that looks like a job nobody applied to.
+    await get_job(session, job_id)
     applications, total = await application_service.list_applications(
         session,
         limit=pagination.limit,
@@ -161,6 +165,39 @@ async def list_applications(
     )
     items = [_as_seen_by(user, application) for application in applications]
     return Page[ApplicationRead].of(items, total, pagination)
+
+
+@router.get(
+    "/stage-counts",
+    response_model=dict[ApplicationStage, int],
+    summary="Count applications by stage",
+    description=(
+        "Recruiters only. Every stage, zero included — across all jobs, or for one "
+        "`job_id`. One request, for funnels and tab badges."
+    ),
+    dependencies=recruiter_only,
+)
+async def count_applications_by_stage(
+    session: SessionDep, job_id: Annotated[uuid.UUID | None, Query()] = None
+) -> dict[ApplicationStage, int]:
+    return await application_service.count_by_stage(session, job_id=job_id)
+
+
+@router.get(
+    "/job-counts",
+    response_model=dict[uuid.UUID, int],
+    summary="Count applications per job",
+    description=(
+        "Recruiters only. Every application each listed job has received, whatever its "
+        "stage — what a job's cap is measured against. Repeat `job_id` for each job."
+    ),
+    dependencies=recruiter_only,
+)
+async def count_applications_by_job(
+    session: SessionDep,
+    job_id: Annotated[list[uuid.UUID], Query(min_length=1, max_length=100)],
+) -> dict[uuid.UUID, int]:
+    return await application_service.count_by_job(session, list(dict.fromkeys(job_id)))
 
 
 @router.get("/{application_id}", response_model=ApplicationRead, summary="Get one application")

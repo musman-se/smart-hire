@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from app.applications.enums import ApplicationStage
 from app.applications.models import Application
 from app.applications.scoring import score_match
 from app.candidates.models import Candidate
@@ -101,9 +102,14 @@ class ApplicationActivities:
 
     @activity.defn(name="send_application_received")
     async def send_application_received(self, application_id: str) -> bool:
-        """Returns True if the message was sent now, False if it had been already."""
+        """Returns True if the message was sent now, False if it had been already — or
+        if the candidate has withdrawn since: "your application is in" would be wrong.
+        That happens when the run is late (the worker was down) or re-run by hand."""
         async with self._sessions() as session:
             application, job, candidate = await self._load(session, application_id)
+            if application.stage is ApplicationStage.WITHDRAWN:
+                logger.info("confirmation_skipped application=%s reason=withdrawn", application_id)
+                return False
             inserted = await session.scalar(
                 insert(Notification)
                 .values(

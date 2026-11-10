@@ -15,6 +15,7 @@ from app.candidates.errors import CandidateNotFoundError
 from app.candidates.models import Candidate
 from app.candidates.schemas import CandidateRegistration, CandidateUpdate
 from app.core.db import violated_constraint
+from app.core.schemas import contains_pattern
 from app.skills.models import Skill
 from app.skills.service import resolve_skills
 
@@ -48,12 +49,15 @@ async def list_candidates(
     skill: str | None = None,
     search: str | None = None,
     min_experience: int | None = None,
+    ids: list[uuid.UUID] | None = None,
 ) -> tuple[list[Candidate], int]:
     filters = []
+    if ids:
+        filters.append(Candidate.id.in_(ids))
     if skill:
         filters.append(Candidate.skill_set.any(Skill.name == skill.strip().lower()))
     if search:
-        filters.append(Candidate.full_name.ilike(f"%{search.strip()}%"))
+        filters.append(Candidate.full_name.ilike(contains_pattern(search.strip()), escape="\\"))
     if min_experience is not None:
         filters.append(Candidate.years_experience >= min_experience)
 
@@ -62,7 +66,7 @@ async def list_candidates(
     rows = await session.scalars(
         select(Candidate)
         .where(*filters)
-        .order_by(Candidate.created_at.desc())
+        .order_by(Candidate.created_at.desc(), Candidate.id.desc())
         .limit(limit)
         .offset(offset)
     )
@@ -109,11 +113,20 @@ async def register_candidate(session: AsyncSession, payload: CandidateRegistrati
 async def update_candidate(
     session: AsyncSession, candidate_id: uuid.UUID, payload: CandidateUpdate
 ) -> Candidate:
-    candidate = await get_candidate(session, candidate_id)
+    # Locked: two saves at once (two tabs) would otherwise each compare skills against
+    # their own stale copy — one losing its change, or both inserting the same
+    # candidate_skills row and the second failing as a 500.
+    candidate = await get_candidate(session, candidate_id, lock=True)
 
     changes = payload.model_dump(exclude_unset=True)
     if "skills" in changes:
-        candidate.skill_set = await resolve_skills(session, changes.pop("skills") or [])
+        skills = changes.pop("skills") or []
+        if sorted(skills) != sorted(candidate.skills):
+            candidate.skill_set = await resolve_skills(session, skills)
+            # Skills live in candidate_skills, so changing only them would issue no
+            # UPDATE on candidates, and updated_at would not move although the profile
+            # did. The database's clock, like every other updated_at.
+            candidate.updated_at = func.now()
     for field, value in changes.items():
         setattr(candidate, field, value)
 

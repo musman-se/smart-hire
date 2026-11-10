@@ -49,8 +49,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set - run cp .env.example .env}
       POSTGRES_DB: ${POSTGRES_DB:-smarthire}
     ports:
-      # Published so the test suite and a GUI client can reach it from the host.
-      - "${DB_HOST_PORT:-5432}:5432"
+      # Published so the test suite and a GUI client can reach it from the host — and
+      # only from the host: loopback, not every interface the machine has.
+      - "127.0.0.1:${DB_HOST_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -79,8 +80,9 @@ services:
       # `docker compose down`; `down -v` wipes it with the database.
       - --db-filename=/home/temporal/temporal.db
     ports:
-      - "${TEMPORAL_HOST_PORT:-7233}:7233"   # gRPC: workers and the API connect here
-      - "${TEMPORAL_UI_HOST_PORT:-8233}:8233"  # web UI: http://localhost:8233
+      # Loopback only, like the database: neither port has any authentication.
+      - "127.0.0.1:${TEMPORAL_HOST_PORT:-7233}:7233"   # gRPC: workers and the API connect here
+      - "127.0.0.1:${TEMPORAL_UI_HOST_PORT:-8233}:8233"  # web UI: http://localhost:8233
     volumes:
       - temporal-data:/home/temporal
     healthcheck:
@@ -99,7 +101,8 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
-      - "${REDIS_HOST_PORT:-6379}:6379"
+      # Loopback only: this Redis has no password, and holds cached API responses.
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -114,6 +117,12 @@ services:
     <<: *backend
     container_name: smarthire-migrate
     command: alembic upgrade head
+    volumes:
+      # The same code the api runs (it bind-mounts app/ for --reload): without these,
+      # migrate applied the image's migrations while the api served the working tree's
+      # models — new models against an old schema, until the next --build.
+      - ./backend/app:/code/app
+      - ./backend/migrations:/code/migrations
     depends_on:
       db:
         condition: service_healthy
@@ -177,6 +186,12 @@ services:
       API_UPSTREAM: ${API_UPSTREAM:-http://api:8000}
     ports:
       - "${WEB_HOST_PORT:-3000}:80"
+    healthcheck:
+      # nginx answering the console's own page; busybox wget ships with nginx:alpine.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
     depends_on:
       api:
         condition: service_healthy

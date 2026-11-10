@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
@@ -60,6 +60,35 @@ describe("TagInput", () => {
     render(<Harness maxTags={2} />);
     await user.type(input(), "a{Enter}b{Enter}c{Enter}");
     expect(tags()).toBe("a|b");
+    // What did not fit stays in the box, and the limit is said out loud.
+    expect(input()).toHaveValue("c");
+    // By text: the harness's <output> is a status region too.
+    expect(screen.getByText(/Limit of 2 reached/)).toHaveAttribute("role", "status");
+  });
+
+  it("keeps only the part of a paste that did not fit", async () => {
+    const user = userEvent.setup();
+    render(<Harness maxTags={2} />);
+    await user.click(input());
+    await user.paste("go, rust, zig, odin");
+    expect(tags()).toBe("go|rust");
+    expect(input()).toHaveValue("zig, odin");
+
+    // Room made, Enter adds the leftover as the tags it is — never one "zig, odin" tag.
+    await user.click(screen.getByRole("button", { name: /remove go/i }));
+    await user.click(input());
+    await user.keyboard("{Enter}");
+    expect(tags()).toBe("rust|zig");
+    expect(input()).toHaveValue("odin");
+  });
+
+  it("ignores the Enter that confirms an IME composition", () => {
+    render(<Harness />);
+    fireEvent.change(input(), { target: { value: "日本" } });
+    fireEvent.keyDown(input(), { key: "Enter", isComposing: true });
+    expect(tags()).toBe("");
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(tags()).toBe("日本");
   });
 
   it("offers suggestions that arrow keys and Enter pick from", async () => {

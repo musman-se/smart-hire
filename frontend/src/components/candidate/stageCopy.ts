@@ -55,7 +55,7 @@ export const STAGE_COPY: Record<ApplicationStage, StageCopy> = {
   },
   withdrawn: {
     headline: "Withdrawn",
-    next: "You withdrew this application.",
+    next: "You withdrew this application. You cannot apply to this job again.",
     icon: "archive",
     tone: "neutral",
   },

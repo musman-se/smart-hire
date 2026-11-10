@@ -8,32 +8,13 @@ from pydantic import AfterValidator, BaseModel, EmailStr, Field, StringConstrain
 
 from app.auth.enums import Role
 from app.auth.schemas import normalise_email
-from app.core.schemas import InputModel, PatchModel, ReadModel
+from app.core.schemas import FullName, InputModel, PatchModel, ReadModel, normalise_full_name
 from app.recruiters.enums import StaffStatus
-from app.recruiters.models import FULL_NAME_MAX_LENGTH, TITLE_MAX_LENGTH
+from app.recruiters.models import TITLE_MAX_LENGTH
 
-FULL_NAME_MIN_LENGTH = 2
-
-
-def normalise_full_name(value: str) -> str:
-    """Trimmed, and at least FULL_NAME_MIN_LENGTH characters once trimmed. The CLI uses
-    this too, so a name typed at the command line follows the API's rule."""
-    value = value.strip()
-    if not FULL_NAME_MIN_LENGTH <= len(value) <= FULL_NAME_MAX_LENGTH:
-        raise ValueError(
-            f"The name must be {FULL_NAME_MIN_LENGTH} to {FULL_NAME_MAX_LENGTH} characters."
-        )
-    return value
-
-
-# One rule for a name wherever it is typed, the API or the command line:
-# normalise_full_name trims *before* checking the length, so surrounding spaces never
-# count against the limit. The bounds are repeated for the OpenAPI schema only.
-FullName = Annotated[
-    str,
-    AfterValidator(normalise_full_name),
-    Field(json_schema_extra={"minLength": FULL_NAME_MIN_LENGTH, "maxLength": FULL_NAME_MAX_LENGTH}),
-]
+# normalise_full_name is re-exported for the CLI, which applies the same rule to a name
+# typed at the command line.
+__all__ = ["FullName", "normalise_full_name"]
 
 
 def _blank_is_none(value: str) -> str | None:

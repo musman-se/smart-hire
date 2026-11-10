@@ -4,6 +4,7 @@ import { AccountCard } from "../components/profile/AccountCard";
 import { AppearanceSettings } from "../components/profile/AppearanceSettings";
 import { ChangePasswordCard } from "../components/profile/ChangePasswordCard";
 import { ProfileEditor } from "../components/profile/ProfileEditor";
+import { RecruiterProfileCard } from "../components/profile/RecruiterProfileCard";
 import {
   Avatar,
   Card,
@@ -13,7 +14,7 @@ import {
   Shortcut,
   SkeletonText,
 } from "../components/ui";
-import { useCandidate } from "../hooks/queries";
+import { useCandidate, useRecruiterProfile } from "../hooks/queries";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 function CandidateProfile({ user }: { user: User }) {
@@ -50,14 +51,16 @@ function CandidateProfile({ user }: { user: User }) {
 }
 
 function RecruiterProfile({ user }: { user: User }) {
+  const profile = useRecruiterProfile();
   return (
     <>
       <PageHeader
         title="Your account"
-        description="Sign-in details, your password, and how SmartHire looks for you."
-        leading={<Avatar name={user.email} size="lg" />}
+        description="Your name and title, sign-in details, your password, and how SmartHire looks for you."
+        leading={<Avatar name={profile.data?.full_name ?? user.email} size="lg" />}
       />
       <div className="profile-settings">
+        <RecruiterProfileCard />
         <AccountCard user={user} />
         <ChangePasswordCard user={user} />
         <AppearanceSettings />
@@ -80,8 +83,8 @@ function RecruiterProfile({ user }: { user: User }) {
   );
 }
 
-/** A candidate edits their profile here; a recruiter sees their account. Both get the
- * appearance settings. */
+/** A candidate edits their profile here; a recruiter their name and title, beside their
+ * account. Both get the appearance settings. */
 export function ProfilePage() {
   const user = useUser();
   useDocumentTitle("Profile");

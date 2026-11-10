@@ -4,13 +4,15 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 
-import { ApiError, refreshInFlight, refreshSession } from "../api/client";
+import { ApiError, mayPresentRefreshToken, refreshSession } from "../api/client";
 import { authApi } from "../api/resources";
 import type { TokenPair, User } from "../api/types";
+import { clearAllRecentItems } from "../components/palette/recent";
 import { session } from "./session";
 
 /**
@@ -47,6 +49,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>(() =>
     session.refreshToken() ? { status: "loading" } : { status: "signed-out", keepPlace: true },
   );
+  // Set by retry(): the next restore was asked for by a person, not by a page load.
+  const userRetry = useRef(false);
 
   // A reload keeps the refresh token but not the access token: exchange it, then ask
   // who it belongs to. refreshSession is single-flight, so StrictMode's double effect
@@ -60,7 +64,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const settle = (next: AuthState) => {
       if (!cancelled) setState(next);
     };
-    refreshSession()
+    const userInitiated = userRetry.current;
+    userRetry.current = false;
+    refreshSession({ userInitiated })
       .then(async (outcome) => {
         if (outcome === "refused") return settle({ status: "signed-out", keepPlace: true });
         if (outcome === "unavailable") return settle({ status: "unavailable" });
@@ -80,7 +86,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [state.status]);
 
-  const retry = useCallback(() => setState({ status: "loading" }), []);
+  const retry = useCallback(() => {
+    userRetry.current = true;
+    setState({ status: "loading" });
+  }, []);
 
   // Signed out by the server — a refresh token it refused. The same person is coming
   // back, so sign-in returns them to their page. The cache goes too: whoever signs in
@@ -89,6 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () =>
       session.onSignedOut(() => {
         queryClient.clear();
+        clearAllRecentItems();
         setState({ status: "signed-out", keepPlace: true });
       }),
     [queryClient],
@@ -108,7 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const adoptSession = useCallback(
     async (tokens: TokenPair) => {
-      session.store(tokens);
+      session.begin(tokens);
       let user: User;
       try {
         user = await authApi.me();
@@ -128,17 +138,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const signOut = useCallback(async () => {
-    // A refresh in flight would store a new pair after the clear below, and revoking
-    // the token it is replacing would achieve nothing. Let it land first.
-    await refreshInFlight();
+    // Signed out here at once, whatever the network is doing. A refresh still in flight
+    // finds the session gone when it lands, and ends the pair it was given itself
+    // (client.ts), so nothing is left behind by not waiting for it — which could take
+    // seconds of retries, with nothing on screen.
     const refreshToken = session.refreshToken();
-    session.clear(); // signed out here at once, whatever the network does next
+    session.clear();
     // Set here, after the listener: the button means whoever signs in next may be
     // someone else, so they start from the beginning, not the last user's page.
     queryClient.clear();
     setState({ status: "signed-out", keepPlace: false });
-    if (refreshToken) {
-      // Ended server-side in the background. If that fails, the token still expires.
+    // Ended server-side in the background; if that fails, the token still expires. Not
+    // a token whose last exchange went unanswered long ago: the server would take that
+    // logout for theft and end the user's other sessions too.
+    if (refreshToken && mayPresentRefreshToken(refreshToken)) {
       void authApi.logout(refreshToken).catch(() => undefined);
     }
   }, [queryClient]);

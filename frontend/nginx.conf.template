@@ -10,6 +10,19 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # Security headers (nginx/security-headers.conf, copied in by the Dockerfile). Here
+    # they reach every location without an add_header of its own — /api/ among them;
+    # the two locations below that set Cache-Control include them again, because a
+    # location's own add_header replaces everything it would have inherited.
+    include /etc/nginx/snippets/security-headers.conf;
+
+    # The bundle is text and compresses to a fraction of its size. text/html is always
+    # compressed once gzip is on; the API's JSON is included too.
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/css application/javascript text/javascript application/json image/svg+xml;
+
     # The API is proxied under the same origin as the app. That is why the project needs
     # no CORS configuration at all — the browser never makes a cross-origin request, so
     # there is nothing to preflight.
@@ -25,6 +38,11 @@ server {
         # With a variable, proxy_pass no longer strips the /api prefix itself.
         rewrite ^/api/(.*)$ /$1 break;
         proxy_pass $api_upstream;
+        # The API sets the real body limit (MAX_REQUEST_BYTES) and refuses with its own
+        # JSON error. nginx's default of 1 MB would cut in first, with an HTML page, and
+        # make raising that setting do nothing — so its cap here is only a backstop, well
+        # above any limit the API would be given.
+        client_max_body_size 16m;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -33,13 +51,23 @@ server {
 
     # Client-side routing: /jobs/<uuid> is a React Router path, not a file on disk, so
     # unknown paths fall back to index.html instead of 404ing.
+    #
+    # index.html must be re-checked on every load (no-cache: kept, but revalidated —
+    # a cheap 304 when unchanged). It names the hashed bundle; a cached copy after a
+    # deploy would point at chunks that no longer exist.
     location / {
         try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache" always;
+        include /etc/nginx/snippets/security-headers.conf;
     }
 
-    # Hashed asset filenames are immutable — safe to cache hard.
+    # Hashed asset filenames are immutable — safe to cache hard. A missing one is a 404,
+    # never index.html: an old tab asking for a replaced chunk must fail cleanly (the
+    # app then reloads to fetch the new build).
     location /assets/ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+        # Not `always`: a 404 cached for a year would outlive the deploy that fixes it.
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        include /etc/nginx/snippets/security-headers.conf;
     }
 }

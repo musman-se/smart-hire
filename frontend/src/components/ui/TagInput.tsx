@@ -95,17 +95,31 @@ export function TagInput({
     .slice(0, MAX_OPTIONS);
   const expanded = open && !atMax && options.length > 0;
 
-  /** Adds tags, skipping blanks and duplicates (against the list and each other). */
+  /** What is in the box, as tags. Typing cannot put a comma there (the key adds a tag),
+   * but the leftover of a paste that went over the limit can: "go, rust" is two. */
+  const draftTags = () => draft.split(/[,\n]/);
+
+  /** Adds tags, skipping blanks and duplicates (against the list and each other). At
+   * the limit, what did not fit stays in the box — only that, so a paste that half fit
+   * is not added twice when Enter is pressed — and the limit is announced under it. */
   function addTags(raw: readonly string[]) {
     const next = [...value];
-    for (const item of raw) {
+    let leftover = "";
+    for (const [index, item] of raw.entries()) {
       const tag = normalize(item);
       if (!tag || next.some((existing) => sameTag(existing, tag))) continue;
-      if (maxTags !== undefined && next.length >= maxTags) break;
+      if (maxTags !== undefined && next.length >= maxTags) {
+        leftover = raw
+          .slice(index)
+          .map((rest) => rest.trim())
+          .filter(Boolean)
+          .join(", ");
+        break;
+      }
       next.push(tag);
     }
     if (next.length !== value.length) onChange(next);
-    setDraft("");
+    setDraft(leftover);
     setActive(-1);
   }
 
@@ -126,15 +140,17 @@ export function TagInput({
         return;
       }
       case "Enter": {
+        // Enter that confirms an IME composition (Japanese, Chinese…) is not a submit.
+        if (event.nativeEvent.isComposing) return;
         const picked = expanded && active >= 0 ? options[active] : undefined;
         if (picked === undefined && !query) return; // nothing to add: let the form submit
         event.preventDefault();
-        addTags([picked ?? draft]);
+        addTags(picked !== undefined ? [picked] : draftTags());
         return;
       }
       case ",":
         event.preventDefault();
-        addTags([draft]);
+        addTags(draftTags());
         return;
       case "Backspace":
         if (draft === "" && value.length > 0) removeAt(value.length - 1);
@@ -209,9 +225,15 @@ export function TagInput({
         onBlur={() => {
           setOpen(false);
           // Leaving the box keeps what was typed rather than silently dropping it.
-          if (query) addTags([draft]);
+          if (query) addTags(draftTags());
         }}
       />
+
+      {atMax && draft.trim() && (
+        <span className="tag-input-limit" role="status">
+          Limit of {maxTags} reached — remove one to add another.
+        </span>
+      )}
 
       <ul id={listboxId} role="listbox" className="listbox" hidden={!expanded} aria-label="Suggestions">
         {options.map((option, index) => (

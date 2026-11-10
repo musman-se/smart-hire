@@ -273,6 +273,15 @@
   animation: fade-in var(--duration-base) var(--ease-out);
 }
 
+/* Groups the step's fields only so they can be locked together once the account
+   exists; it draws nothing itself. */
+.auth-step-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 .auth-form-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

@@ -104,8 +104,10 @@ async def test_a_draft_job_does_not_exist_to_a_candidate(client: AsyncClient) ->
 
 
 async def test_closed_job_does_not_accept_applications(client: AsyncClient) -> None:
-    """Answered as GET /jobs/{id} answers each candidate: an applicant still sees the
-    closed job, so is told it is closed; anyone else is told it does not exist."""
+    """Answered as GET /jobs/{id} answers each candidate. An applicant still sees the
+    closed job, and is told the true reason they cannot apply: they already have — the
+    duplicate check comes before every other rule. Anyone else is told the job does not
+    exist."""
     job = await make_job(client)
     applicant, bystander = await make_candidate(client), await make_candidate(client)
     await apply(client, job, applicant)
@@ -115,7 +117,7 @@ async def test_closed_job_does_not_accept_applications(client: AsyncClient) -> N
     stranger = await apply(client, job, bystander)
 
     assert again.status_code == 409
-    assert again.json()["error"]["code"] == "job_not_open"
+    assert again.json()["error"]["code"] == "duplicate_application"
     assert stranger.status_code == 404
 
 

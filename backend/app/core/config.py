@@ -15,6 +15,7 @@ Every variable is listed, with its default, in `.env.example` at the repository 
 """
 
 from functools import cached_property
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr, model_validator
@@ -26,12 +27,17 @@ from sqlalchemy import URL
 EXAMPLE_JWT_SECRET_KEY = "local-development-only-replace-me-0123456789abcdef"
 
 
+# backend/, whatever the working directory: app/core/config.py is two levels below it.
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         # The repository root's .env (one file for Compose and the backend alike), then
         # backend/.env for personal overrides. Later files win; real environment
-        # variables win over both. Missing files are skipped.
-        env_file=("../.env", ".env"),
+        # variables win over both. Missing files are skipped. Anchored to this file,
+        # not to the directory the process happens to start in.
+        env_file=(_BACKEND_DIR.parent / ".env", _BACKEND_DIR / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -60,7 +66,8 @@ class Settings(BaseSettings):
     # managed database that hands you one connection string.
     database_url_override: str | None = Field(default=None, alias="DATABASE_URL")
 
-    # Echo every SQL statement. Useful while learning; noisy in production.
+    # Echo every SQL statement. Useful while learning; refused in production, because it
+    # logs every parameter too — password hashes, emails, token hashes.
     db_echo: bool = False
 
     # Connection pool. Each API process keeps up to pool_size + max_overflow connections
@@ -92,6 +99,10 @@ class Settings(BaseSettings):
     # How long an admin's invitation link stays usable. The new recruiter sets their own
     # password through it, so it is as sensitive as a password-reset link.
     invitation_ttl_hours: int = Field(default=72, ge=1, le=720)
+
+    # --- Requests ----------------------------------------------------------------------
+    # The largest request body accepted; larger ones get 413. See app/core/limits.py.
+    max_request_bytes: int = Field(default=1_048_576, ge=64 * 1024)
 
     # --- Temporal (workflow orchestration) ------------------------------------------
     # host:port of the Temporal server's gRPC frontend. Compose overrides it to
@@ -129,8 +140,11 @@ class Settings(BaseSettings):
     worker_shutdown_grace_seconds: float = Field(default=20.0, ge=0)
 
     # --- Application processing workflow ---------------------------------------------
-    # Attempts per activity (scoring, the confirmation message) before giving up.
-    application_processing_max_attempts: int = Field(default=5, ge=1, le=20)
+    # Attempts per activity (scoring, the confirmation message). 0, the default, means
+    # no limit: both are idempotent and nobody waits on them, so they keep retrying —
+    # once a minute at most — until the database answers. A limit turned a short
+    # database outage into applications that were never scored or confirmed.
+    application_processing_max_attempts: int = Field(default=0, ge=0, le=20)
 
     # --- Business rules ------------------------------------------------------------
     # How many applications a candidate may have open at once. Applications in a terminal
@@ -185,6 +199,8 @@ class Settings(BaseSettings):
         # beats discovering it from publishes that fail on purpose.
         if self.environment == "production" and self.publishing_fault_rate > 0:
             raise ValueError("PUBLISHING_FAULT_RATE must be 0 when ENVIRONMENT=production")
+        if self.environment == "production" and self.db_echo:
+            raise ValueError("DB_ECHO must be off when ENVIRONMENT=production")
         return self
 
     @cached_property

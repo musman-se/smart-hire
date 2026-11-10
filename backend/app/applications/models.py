@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     DateTime,
     Enum,
     Float,
@@ -78,8 +79,17 @@ class Application(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         # During a hiring drive one job can hold thousands of applications; this reads
         # the newest 20 index entries instead of sorting all of them.
         Index("ix_applications_job_id_created_at", "job_id", "created_at"),
-        # No index on stage by itself: six distinct values means any one stage is a
-        # large slice of the table, and the planner rightly prefers a sequential scan.
+        # The recruiter's queue across all jobs: WHERE stage = ? ORDER BY created_at
+        # DESC LIMIT 20, and the same with no stage filter. A stage alone is a large
+        # slice of the table — but this query reads the newest 20 of it, which the
+        # index hands over in order instead of the whole slice being sorted.
+        Index("ix_applications_stage_created_at", "stage", "created_at"),
+        Index("ix_applications_created_at", "created_at"),
+        # The match score is a percentage; nothing else should ever be stored.
+        CheckConstraint(
+            "match_score IS NULL OR (match_score >= 0 AND match_score <= 100)",
+            name="match_score_range",
+        ),
     )
 
     def __repr__(self) -> str:

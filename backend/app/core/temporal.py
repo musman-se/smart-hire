@@ -25,6 +25,48 @@ _client: Client | None = None
 _lock = asyncio.Lock()
 
 
+# Database errors a retry cannot fix: the same statement fails the same way every time.
+# Both workflows fail fast on them — to compensation in seconds, or to a Failed run a
+# recruiter can re-process — instead of retrying for ever. OperationalError and
+# InterfaceError stay retryable: a restart or a dropped connection is exactly what a
+# retry is for.
+#
+# IntegrityError is not on this list. Publishing can meet one as a passing race — a
+# replaced run's last write landing beside the new run's — which the next attempt
+# resolves, and its attempts are bounded anyway. Processing, whose attempts are not,
+# adds it (app.applications.workflow).
+NON_RETRYABLE_DATABASE_ERRORS = ["DataError", "ProgrammingError"]
+
+# Errors that mean a bug in our own code: the same input fails the same way on every
+# attempt. A workflow that retries without limit must stop on them, or a bug would
+# keep one run spinning for ever — and the console's re-process would only attach to it.
+PROGRAMMING_ERRORS = [
+    "TypeError",
+    "AttributeError",
+    "KeyError",
+    "IndexError",
+    "ValueError",
+    "NameError",
+]
+
+
+class WorkflowStartUnknownError(DomainError):
+    """Temporal did not answer in time, so the run may or may not have started.
+
+    Not WorkflowUnavailableError: that one promises nothing was changed, and a caller
+    acting on it (putting a job back to DRAFT) could undo a run that is in fact going.
+    """
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    code = "workflow_start_unknown"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "The workflow engine was slow to answer, so publishing may have started. "
+            "Check the job again in a moment; if it is stuck, restart publishing."
+        )
+
+
 class WorkflowUnavailableError(DomainError):
     """Temporal could not be reached, so no workflow was started.
 

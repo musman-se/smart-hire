@@ -2,7 +2,10 @@
 
 Email delivery is simulated (the brief's background workers include notifications, and
 no mail provider is in scope), but the record is real: what was sent, to whom, about
-what, and when. The row is the proof a message went out.
+what, and when. The row is the proof a message went out — for as long as the
+application exists: it is deleted with the application (ON DELETE CASCADE), and so with a
+candidate who deletes their account. Keeping it would keep their email address after
+they asked to leave; the record goes with the person.
 
 The interesting column is dedupe_key, unique. Temporal runs an activity *at least*
 once: a worker can send the message and crash before reporting success, and the

@@ -210,6 +210,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/jobs/status-counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count jobs by status
+         * @description Recruiters only. Every status, zero included, in one request.
+         */
+        get: operations["count_jobs_by_status_jobs_status_counts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/jobs/{job_id}": {
         parameters: {
             query?: never;
@@ -219,7 +239,7 @@ export interface paths {
         };
         /**
          * Get one job
-         * @description A candidate may read a published job, and a closed one they applied to — so their applications keep pointing somewhere.
+         * @description A candidate may read a published job, and any job they applied to, whatever has happened to it since — so their applications keep pointing somewhere.
          */
         get: operations["get_job_jobs__job_id__get"];
         put?: never;
@@ -392,6 +412,46 @@ export interface paths {
          * @description A candidate always gets their own; `candidate_id` may only name themselves.
          */
         get: operations["list_applications_applications_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/stage-counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count applications by stage
+         * @description Recruiters only. Every stage, zero included — across all jobs, or for one `job_id`. One request, for funnels and tab badges.
+         */
+        get: operations["count_applications_by_stage_applications_stage_counts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/job-counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count applications per job
+         * @description Recruiters only. Every application each listed job has received, whatever its stage — what a job's cap is measured against. Repeat `job_id` for each job.
+         */
+        get: operations["count_applications_by_job_applications_job_counts_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -690,33 +750,33 @@ export interface components {
              */
             note?: string | null;
         };
-        /** CandidateRead */
+        /**
+         * CandidateRead
+         * @description What the API returns. Deliberately not the input schema: today's input rules
+         *     (email syntax, the 60-year cap, the name and link rules) must not be re-applied to
+         *     rows already stored, or one row saved before a rule existed would turn every list
+         *     that includes it into a 500.
+         */
         CandidateRead: {
-            /**
-             * Email
-             * Format: email
-             */
-            email: string;
-            /** Full Name */
-            full_name: string;
-            /** Phone */
-            phone?: string | null;
-            /** Headline */
-            headline?: string | null;
-            /**
-             * Years Experience
-             * @default 0
-             */
-            years_experience: number;
-            /** Skills */
-            skills?: string[];
-            /** Resume Url */
-            resume_url?: string | null;
             /**
              * Id
              * Format: uuid
              */
             id: string;
+            /** Email */
+            email: string;
+            /** Full Name */
+            full_name: string;
+            /** Phone */
+            phone: string | null;
+            /** Headline */
+            headline: string | null;
+            /** Years Experience */
+            years_experience: number;
+            /** Skills */
+            skills: string[];
+            /** Resume Url */
+            resume_url: string | null;
             /**
              * Created At
              * Format: date-time
@@ -907,32 +967,33 @@ export interface components {
             /** Max Applications */
             max_applications?: number | null;
         };
-        /** JobRead */
+        /**
+         * JobRead
+         * @description What the API returns. Deliberately not JobBase: input rules (the 50-year cap, the
+         *     skill-list cap) must not be re-applied to rows already stored, or one row written
+         *     by a script or saved before a rule existed would turn every job list into a 500.
+         */
         JobRead: {
-            /** Title */
-            title: string;
-            /** Description */
-            description: string;
-            /** Department */
-            department?: string | null;
-            /** Location */
-            location?: string | null;
-            /** @default full_time */
-            employment_type: components["schemas"]["EmploymentType"];
-            /** Required Skills */
-            required_skills?: string[];
-            /**
-             * Min Experience Years
-             * @default 0
-             */
-            min_experience_years: number;
-            /** Max Applications */
-            max_applications?: number | null;
             /**
              * Id
              * Format: uuid
              */
             id: string;
+            /** Title */
+            title: string;
+            /** Description */
+            description: string;
+            /** Department */
+            department: string | null;
+            /** Location */
+            location: string | null;
+            employment_type: components["schemas"]["EmploymentType"];
+            /** Required Skills */
+            required_skills: string[];
+            /** Min Experience Years */
+            min_experience_years: number;
+            /** Max Applications */
+            max_applications: number | null;
             status: components["schemas"]["JobStatus"];
             /** Published At */
             published_at: string | null;
@@ -2508,6 +2569,100 @@ export interface operations {
             };
         };
     };
+    count_jobs_by_status_jobs_status_counts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     get_job_jobs__job_id__get: {
         parameters: {
             query?: never;
@@ -3471,6 +3626,8 @@ export interface operations {
                 /** @description Case-insensitive name match */
                 search?: string | null;
                 min_experience?: number | null;
+                /** @description Only these candidates, e.g. the applicants on one page — one request instead of one per candidate. Repeat the parameter for each id. */
+                ids?: string[] | null;
                 /** @description Rows per page */
                 limit?: number;
                 /** @description Rows to skip */
@@ -3873,6 +4030,198 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_ApplicationRead_"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    count_applications_by_stage_applications_stage_counts_get: {
+        parameters: {
+            query?: {
+                job_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    count_applications_by_job_applications_job_counts_get: {
+        parameters: {
+            query: {
+                job_id: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
                 };
             };
             /** @description Bad Request */

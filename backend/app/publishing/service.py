@@ -5,8 +5,9 @@ import uuid
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
-from app.core.temporal import WorkflowUnavailableError
+from app.core.temporal import WorkflowStartUnknownError, WorkflowUnavailableError
 from app.jobs.enums import JobStatus
 from app.jobs.errors import JobNotOpenError
 from app.jobs.models import Job
@@ -26,9 +27,6 @@ from app.skills.models import Skill
 
 logger = logging.getLogger(__name__)
 
-# Editing any of these on a published job re-runs the analysis.
-CONTENT_FIELDS = frozenset({"title", "description", "required_skills"})
-
 
 async def publish_job(session: AsyncSession, publisher: JobPublisher, job_id: uuid.UUID) -> Job:
     """Move a job into PROCESSING and start the workflow that will make it PUBLISHED.
@@ -39,7 +37,8 @@ async def publish_job(session: AsyncSession, publisher: JobPublisher, job_id: uu
       draft, publish_failed -> processing, then start the workflow
       processing            -> start a fresh run, replacing any in flight — which also
                                heals a job whose run was lost to an outage
-      published             -> nothing to do
+      published             -> re-run the analysis; the job stays published. The way to
+                               retry a content refresh that failed (publish_error set)
 
     The status is committed *before* the workflow starts, so the workflow always finds
     the job in PROCESSING. If the start then fails, the status is put back and nothing
@@ -50,6 +49,12 @@ async def publish_job(session: AsyncSession, publisher: JobPublisher, job_id: uu
     job = await get_job(session, job_id, lock=True)
 
     if job.status is JobStatus.PUBLISHED:
+        # Lock released before the network call, as below. Nothing to undo if Temporal
+        # is down: the job never left PUBLISHED, and the 503 tells the recruiter the
+        # analysis was not re-run — truthfully "nothing was changed", so nothing is
+        # recorded either (the analysis it already has may be perfectly current).
+        await session.commit()
+        await _start_refresh(session, publisher, job, quiet=False)
         return job
     if job.status is JobStatus.CLOSED:
         raise JobNotOpenError("A closed job cannot be published. Reopen it first.")
@@ -64,6 +69,10 @@ async def publish_job(session: AsyncSession, publisher: JobPublisher, job_id: uu
 
     try:
         await publisher.start(job.id)
+    except WorkflowStartUnknownError:
+        # The run may be going: leave the job in PROCESSING. If it was not started, the
+        # job shows as stuck and "restart publishing" (this same call) starts it.
+        raise
     except WorkflowUnavailableError:
         if previous_status is not JobStatus.PROCESSING:
             # Undo only our own change, and only if it still stands: conditional on the
@@ -82,18 +91,58 @@ async def publish_job(session: AsyncSession, publisher: JobPublisher, job_id: uu
     return job
 
 
-async def refresh_content(publisher: JobPublisher, job: Job) -> None:
+async def refresh_content(session: AsyncSession, publisher: JobPublisher, job: Job) -> None:
     """Re-analyse a published job after its text changed. Best effort.
 
     The job stays PUBLISHED throughout — a typo fix must not take a live job offline —
-    and the edit has already been saved. If Temporal is down, the analysis is not
-    refreshed until the next edit; the skipped refresh is logged as
-    content_refresh_skipped.
+    and the edit has already been saved, so a refresh that cannot start does not fail
+    the request: it is recorded in publish_error, as a failed refresh is. The recruiter
+    sees the analysis is stale, and publishing the job again re-runs it.
+    """
+    await _start_refresh(session, publisher, job, quiet=True)
+
+
+REFRESH_NOT_STARTED = (
+    "The analysis was not refreshed: the workflow engine was unavailable. "
+    "Publish the job again to refresh it."
+)
+
+
+async def _start_refresh(
+    session: AsyncSession, publisher: JobPublisher, job: Job, *, quiet: bool
+) -> None:
+    """Start a refresh run for a published job.
+
+    quiet: an edit, already saved, whose re-analysis could not start — recorded in
+    publish_error, since the analysis now describes the old text, and not raised.
+    Otherwise (an explicit re-run, which answers 503) the outage is raised and nothing
+    is written.
     """
     try:
-        await publisher.start(job.id)
+        await publisher.start(job.id, refresh=True)
+    except WorkflowStartUnknownError:
+        # Possibly running: nothing to record. If it did not start, the analysis stays
+        # as it was until the next edit or re-publish.
+        logger.warning("content_refresh_unknown job=%s", job.id)
+        if not quiet:
+            raise
     except WorkflowUnavailableError:
         logger.warning("content_refresh_skipped job=%s reason=workflow_unavailable", job.id)
+        if not quiet:
+            raise
+        # Conditional, as the workflow's own writes are: a job closed meanwhile is left
+        # alone.
+        recorded = await session.execute(
+            update(Job)
+            .where(Job.id == job.id, Job.status == JobStatus.PUBLISHED)
+            .values(publish_error=REFRESH_NOT_STARTED)
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
+        if recorded.rowcount:
+            # The object in hand too, so the response that follows shows it — set as
+            # committed, not as a change for the session to write again.
+            set_committed_value(job, "publish_error", REFRESH_NOT_STARTED)
 
 
 async def get_publication(

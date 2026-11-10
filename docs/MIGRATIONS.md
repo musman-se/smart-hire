@@ -234,7 +234,18 @@ Not needed at this project's size, but the questions a reviewer will ask:
 - **Adding an enum value** needs `ALTER TYPE ... ADD VALUE`, written by hand; removing
   one means recreating the type.
 - **Review the SQL before it runs:** `alembic upgrade head --sql` prints it without
-  touching a database (offline mode).
+  touching a database (offline mode). A revision that checks existing rows before adding
+  a constraint skips the check there (`context.is_offline_mode()`), since there are no
+  rows to read; the printed script is one transaction per revision, as a real upgrade is.
+- **Every migration waits at most 5 s for a lock** (`SET lock_timeout` in `env.py`).
+  `migrate` runs while the old API still serves; a DDL statement queued behind a long
+  transaction would otherwise queue every query on that table behind it. A timed-out
+  migration fails the deploy, which is retried — better than a stalled API.
+- **A constraint on a big table: add it `NOT VALID`, then `VALIDATE CONSTRAINT`.** Adding
+  a CHECK or a foreign key validates every row while holding a lock that blocks writes.
+  `NOT VALID` takes effect for new rows at once with a brief lock; `VALIDATE` then checks
+  the old ones under a lock that lets writes continue. The early revisions here add them
+  in one step — fine at this size, and an applied revision is history, not to be edited.
 
 ## 9. Commands
 

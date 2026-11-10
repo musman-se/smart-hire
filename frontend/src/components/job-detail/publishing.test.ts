@@ -78,6 +78,19 @@ describe("publishProgress", () => {
     ]);
   });
 
+  it("calls a live job whose refresh failed out of date, not failed", () => {
+    const failedRefresh = publishProgress("published", { status: "failed", current_step: "failed" });
+    expect(failedRefresh.outcome).toBe("stale");
+  });
+
+  it("calls a live job whose refresh never started out of date", () => {
+    const lastRun = { status: "completed", current_step: "completed" };
+    expect(publishProgress("published", lastRun, undefined, "The analysis was not refreshed").outcome).toBe(
+      "stale",
+    );
+    expect(publishProgress("published", lastRun, undefined, null).outcome).toBe("completed");
+  });
+
   it("is idle for a draft that was never published", () => {
     expect(publishProgress("draft", null)).toMatchObject({ outcome: "idle" });
   });

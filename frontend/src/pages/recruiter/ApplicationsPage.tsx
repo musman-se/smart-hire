@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import {
@@ -273,6 +273,21 @@ export function ApplicationsPage() {
   // Previous and next follow the rows in the order they are shown.
   const orderedRows = visibleRows ? sortRows(visibleRows, columns, sort) : [];
   const openIndex = orderedRows.findIndex((application) => application.id === drawer.applicant);
+  // Where the open application last stood in the list. A move out of this tab takes
+  // it off the list, and with it the drawer's place: the recruiter carries on from the
+  // same spot — "next" is the row that took its place.
+  const lastPlace = useRef<{ id: string; index: number } | null>(null);
+  useEffect(() => {
+    if (openIndex >= 0) lastPlace.current = { id: drawer.applicant, index: openIndex };
+  }, [drawer.applicant, openIndex]);
+  const place =
+    openIndex >= 0
+      ? { previous: openIndex - 1, next: openIndex + 1 }
+      : lastPlace.current?.id === drawer.applicant
+        ? { previous: lastPlace.current.index - 1, next: lastPlace.current.index }
+        : null;
+  const previousRow = place ? orderedRows[place.previous] : undefined;
+  const nextRow = place ? orderedRows[place.next] : undefined;
   const openJob = opened && jobs.byId.get(opened.job_id);
 
   const stageLabel = stage ? humanize(stage) : "any stage";
@@ -397,7 +412,10 @@ export function ApplicationsPage() {
             columns={columns}
             rows={visibleRows}
             getRowId={(application) => application.id}
-            loading={queue.isLoading || queue.isFetching}
+            // Busy while there is nothing current to read: a first load, or the last
+            // tab's rows standing in (dimmed via is-stale). A background poll is not
+            // "busy" — screen readers would hear it every few seconds.
+            loading={queue.isLoading || queue.isPlaceholderData}
             skeletonRows={8}
             empty={empty}
             error={queue.error}
@@ -440,14 +458,8 @@ export function ApplicationsPage() {
               jobTitle: openJob.title,
             })
           }
-          onPrevious={
-            openIndex > 0 ? () => setDrawer({ applicant: orderedRows[openIndex - 1]?.id ?? "" }) : undefined
-          }
-          onNext={
-            openIndex >= 0 && openIndex < orderedRows.length - 1
-              ? () => setDrawer({ applicant: orderedRows[openIndex + 1]?.id ?? "" })
-              : undefined
-          }
+          onPrevious={previousRow && (() => setDrawer({ applicant: previousRow.id }))}
+          onNext={nextRow && (() => setDrawer({ applicant: nextRow.id }))}
         />
       )}
       {stageMove.dialog}

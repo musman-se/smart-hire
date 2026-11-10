@@ -147,7 +147,9 @@ may lag, retry or fail without touching it.
 
 ## 5. Failure modes
 
-Every row was tested, most of them against the real stack.
+Every row was tested, most of them against the real stack. The start policies
+(`TERMINATE_EXISTING` for publishing, `USE_EXISTING` for processing) are tested against
+the real Temporal server, not only through the inline fakes the API tests use.
 
 | What fails | What happens | Where it is proven |
 |---|---|---|
@@ -157,12 +159,20 @@ Every row was tested, most of them against the real stack.
 | Temporal, when publishing | Status change reverted; `503 workflow_unavailable`; nothing half-done | `test_engine_outage_changes_nothing` |
 | Temporal, when applying | Application still `201`; unscored; `POST /applications/{id}/process` recovers | `test_an_engine_outage_does_not_fail_the_application` |
 | A job closed mid-publish | Stays closed: the final step only leaves `processing` | `test_closing_mid_publish_is_not_undone_by_the_workflow` |
-| A double-clicked Publish | One run: the second start replaces the first (`TERMINATE_EXISTING`) | `test_publishing_a_processing_job_starts_a_fresh_run` |
+| A double-clicked Publish | One run: the second start replaces the first (`TERMINATE_EXISTING`) | `test_a_second_publish_replaces_the_run_in_flight` (real Temporal); `test_publishing_a_processing_job_starts_a_fresh_run` |
+| Temporal slow to answer a start (deadline exceeded) | The run may have started, so the job stays `processing`; `503 workflow_start_unknown`. If it did not start, *Restart publishing* starts it | `test_a_slow_start_leaves_the_job_processing` |
+| The analysis, when refreshing a published job after an edit | The job stays `published` (a re-analysis never takes a live job offline); `publish_error` records "Refreshing the analysis failed: …"; publishing it again re-runs the analysis and clears it | `test_a_failed_refresh_is_recorded_and_can_be_rerun` |
+| The database, while applications are processed | Scoring and the confirmation retry with backoff, up to once a minute, until it answers (`APPLICATION_PROCESSING_MAX_ATTEMPTS=0`, no limit); both branches finish even if one is still failing | By design; a bounded retry turned a 20 s restart into applications never scored |
+| A failure no retry can fix, while applications are processed | A constraint refusing the row (`IntegrityError`, `DataError`), or a bug in our code (`TypeError`, `KeyError`, `ValueError`…), fails the step at once instead of retrying for ever; anything else that never succeeds is stopped by a 6-hour deadline per step. The run ends, and `POST /applications/{id}/process` starts a fresh one once the cause is fixed | `PROGRAMMING_ERRORS`, `PROCESSING_STEP_DEADLINE` in the code |
+| Temporal down when a live job's text is edited | The edit is saved and the job stays `published`; `publish_error` says the analysis was not refreshed (the edit's own response already shows it) | `test_a_refresh_that_cannot_start_is_recorded` |
+| Temporal down when *Re-run analysis* is pressed | `503 workflow_unavailable`, and truly nothing changed: no `publish_error` is written over a current analysis | `test_re_running_the_analysis_with_temporal_down_changes_nothing` |
+| A replaced publishing run with an activity already executing | Terminating a run does not stop an activity already running on a worker; its last write may still land (e.g. the old run's failure reason). The window is one activity; publishing again repairs it. Guarding every write with the run id is the full fix, not yet done | Known, documented |
 | A job left `processing` with no run (ended or never started) | The console shows *Restart publishing*; publishing again starts a fresh run | Live: workflow terminated with the Temporal CLI, restarted from the console |
 | A recruiter closes the job while Temporal refuses the start | The revert is conditional: the close stands | `test_an_outage_revert_does_not_undo_a_concurrent_close` |
 | A retried apply / create | Original response replayed (Idempotency-Key, Redis) | `tests/test_idempotency.py` |
 | Redis | Requests run unprotected; database constraints still refuse duplicates | `test_redis_down_fails_open` |
 | The notification activity, twice | One row, one email | `test_workflow_scores_and_confirms_exactly_once` |
+| The confirmation, after the candidate withdrew (a late or re-run run) | Not sent | `test_no_confirmation_after_a_withdrawal` |
 
 ### The dual write
 

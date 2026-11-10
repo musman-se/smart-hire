@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 
+from email_validator import EmailNotValidError, validate_email
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from app.auth.enums import Role
@@ -22,8 +23,20 @@ PASSWORD_MAX_LENGTH = 128
 def normalise_email(value: str) -> str:
     """How every email is stored and looked up: trimmed and lowercase, so "Ayesha@x.com "
     and "ayesha@x.com" are one account. Registration, sign-in and invitations all use it,
-    so the address someone is invited under is the one they sign in with."""
-    return value.strip().lower()
+    so the address someone is invited under is the one they sign in with.
+
+    The address is first put in email-validator's normal form, the one EmailStr stores
+    at registration: an internationalised domain written as "xn--bcher-kva.example"
+    becomes "bücher.example", and accented letters are composed. Without that, signing
+    in with exactly the string you registered with could fail. Text that is not an
+    address at all (sign-in accepts any) is only trimmed and lowercased.
+    """
+    value = value.strip()
+    try:
+        value = validate_email(value, check_deliverability=False).normalized
+    except EmailNotValidError:
+        pass
+    return value.lower()
 
 
 # A password someone chooses — at registration, on a password change, or through an

@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.models import Base, TimestampMixin
+from app.core.names import FULL_NAME_MAX_LENGTH, FULL_NAME_NOT_BLANK
 
 if TYPE_CHECKING:
     from app.applications.models import Application
@@ -28,7 +29,7 @@ class Candidate(Base, TimestampMixin):
         primary_key=True,
     )
 
-    full_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    full_name: Mapped[str] = mapped_column(String(FULL_NAME_MAX_LENGTH), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(32))
     headline: Mapped[str | None] = mapped_column(String(200))
 
@@ -59,6 +60,9 @@ class Candidate(Base, TimestampMixin):
 
     __table_args__ = (
         CheckConstraint("years_experience >= 0", name="years_experience_non_negative"),
+        # The API trims a name and requires two characters; this holds every writer to
+        # the same, so no list shows a blank name.
+        CheckConstraint(FULL_NAME_NOT_BLANK, name="full_name_not_blank"),
         # Default listing order, newest first.
         Index("ix_candidates_created_at", "created_at"),
         # Name search is ILIKE '%term%' — see ix_jobs_title_trgm.

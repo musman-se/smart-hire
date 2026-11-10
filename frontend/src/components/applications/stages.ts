@@ -13,6 +13,30 @@ import {
  * score means something went wrong, and how an application's history reads.
  */
 
+/** The colour a move into `to` gets on a timeline — the same on every screen. */
+const STAGE_EVENT_TONE: Partial<Record<ApplicationStage, "success" | "warning" | "danger">> = {
+  offer: "success",
+  hired: "success",
+  rejected: "danger",
+  withdrawn: "warning",
+};
+
+export function stageEventTone(to: ApplicationStage): "accent" | "success" | "warning" | "danger" {
+  return STAGE_EVENT_TONE[to] ?? "accent";
+}
+
+/** The marker for one entry of an application's stage history; `from` is null for the
+ * application itself. */
+export function stageEventIcon(
+  from: ApplicationStage | null,
+  to: ApplicationStage,
+): "send" | "award" | "x-circle" | "arrow-right" {
+  if (from === null) return "send";
+  if (to === "hired") return "award";
+  if (to === "rejected") return "x-circle";
+  return "arrow-right";
+}
+
 /** Where a recruiter may move an application. Withdrawing is the candidate's decision
  * — the server refuses it from a recruiter — so it is never offered here. */
 export function recruiterTargets(stage: ApplicationStage): ApplicationStage[] {

@@ -33,6 +33,28 @@ function parse<T>(raw: string | null, fallback: T): T {
   }
 }
 
+/**
+ * Deletes every key that starts with `prefix` — from storage and from the in-memory
+ * fallback — and tells every reader. For data that must not outlive a session.
+ */
+export function removeStoredByPrefix(prefix: string): void {
+  try {
+    const storage = window.localStorage;
+    const doomed: string[] = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key?.startsWith(prefix)) doomed.push(key);
+    }
+    doomed.forEach((key) => storage.removeItem(key));
+  } catch {
+    // Storage blocked: only the in-memory copies exist.
+  }
+  for (const key of [...memory.keys()]) {
+    if (key.startsWith(prefix)) memory.delete(key);
+  }
+  listeners.forEach((notify) => notify());
+}
+
 /** Same-tab writes notify through `listeners`; other tabs' through the storage event. */
 function subscribe(notify: () => void) {
   listeners.add(notify);

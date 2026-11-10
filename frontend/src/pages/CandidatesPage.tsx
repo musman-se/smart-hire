@@ -76,7 +76,7 @@ export function CandidatesPage() {
 
   // The URL updates on every keystroke; the request waits for a pause.
   const search = useDebouncedValue(filters.q.trim());
-  const { data, error, isLoading, isFetching, refetch } = useCandidates({
+  const { data, error, isLoading, isPlaceholderData, refetch } = useCandidates({
     search: search || undefined,
     skill: filters.skill || undefined,
     min_experience: filters.exp,
@@ -335,7 +335,9 @@ export function CandidatesPage() {
             rows={rows}
             getRowId={(candidate) => candidate.id}
             getRowLabel={(candidate) => candidate.full_name}
-            loading={isLoading || isFetching}
+            // Not on background refetches: aria-busy on every poll would be noise.
+            loading={isLoading || isPlaceholderData}
+            className={isPlaceholderData ? "is-stale" : undefined}
             skeletonRows={8}
             empty={empty}
             error={error}

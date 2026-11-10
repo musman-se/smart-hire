@@ -238,6 +238,8 @@ The database refuses invalid data itself, whichever client wrote it.
 | `uq_skills_name` + `ck_skills_name_normalised` | One row per skill |
 | `ck_jobs_min_experience_non_negative`, `ck_candidates_years_experience_non_negative` | No negative experience |
 | `ck_jobs_max_applications_positive` | A cap, if set, is at least 1 |
+| `ck_applications_match_score_range` | A score is a percentage, 0–100, or not scored yet |
+| `ck_candidates_full_name_not_blank`, `ck_recruiters_full_name_not_blank` | No blank names: at least two characters once trimmed, as the API requires |
 | Foreign keys | No application or skill link points at a missing row |
 
 Every constraint and index follows one naming convention (`pk_`, `fk_`, `uq_`, `ck_`,
@@ -261,6 +263,8 @@ around the queries the services actually run.
 | `uq_applications_job_candidate` | The duplicate rule, and every lookup by `job_id` (its leading column) |
 | `ix_applications_candidate_id_stage` | The active-application count, run on every apply |
 | `ix_applications_job_id_created_at` | A job's applications, newest first |
+| `ix_applications_stage_created_at`, `ix_applications_created_at` | The recruiter's queue across all jobs: newest first, with or without a stage — read in order and stopped after a page, instead of the whole table sorted |
+| `ix_skills_name_pattern` (`text_pattern_ops`) | The skill picker's prefix search, `name LIKE 'py%'`, which the unique index cannot serve under the `en_US` collation |
 | `ix_job_skills_skill_id`, `ix_candidate_skills_skill_id` | "Which jobs need kafka?" — the primary keys only serve lookups by owner |
 | `uq_users_email` | Every sign-in: `WHERE email = ?` |
 | `uq_refresh_tokens_token_hash` | Every refresh and sign-out: `WHERE token_hash = ?` |
@@ -283,7 +287,8 @@ cascade practically never runs.)
 | `ix_jobs_status` | Served the filter but not the sort: to find the newest 20 published jobs, Postgres fetched all of them and sorted | `(status, created_at)`: walks the published slice backwards and stops after 20 |
 | `ix_applications_job_id` | Duplicated the unique index on `(job_id, candidate_id)`, whose leading column already serves `job_id` | Dropped |
 | `ix_applications_candidate_id` | Served half of the active-count query | `(candidate_id, stage)` serves all of it |
-| `ix_applications_stage` | Six distinct values: any one stage is a large slice of the table, so the planner prefers a sequential scan | Dropped |
+| `ix_applications_stage` | Six distinct values: any one stage is a large slice of the table, so the planner prefers a sequential scan | Dropped. Later (9c4f7d2e1b60) `(stage, created_at)` came back for a different query: the cross-job queue reads the *newest page* of a stage, and the index hands it over in order — a filter alone was never the point |
+| `ix_job_extracted_skills_skill_id` | Every read of that table is by `job_id`, and skills are never deleted, so the index only cost a write per publish | Dropped (9c4f7d2e1b60) |
 
 ### 4.2 Measured
 

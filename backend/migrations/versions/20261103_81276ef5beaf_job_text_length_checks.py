@@ -24,7 +24,7 @@ Create Date: 2026-11-03
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
+from alembic import context, op
 
 revision: str = "81276ef5beaf"
 down_revision: str | Sequence[str] | None = "d5e8a2f41c07"
@@ -36,6 +36,11 @@ DESCRIPTION_RULE = "char_length(description) BETWEEN 10 AND 20000"
 
 
 def upgrade() -> None:
+    # Offline (`alembic upgrade --sql`) there is no database to read: emit the DDL only.
+    if context.is_offline_mode():
+        op.create_check_constraint(op.f("ck_jobs_title_length"), "jobs", TITLE_RULE)
+        op.create_check_constraint(op.f("ck_jobs_description_length"), "jobs", DESCRIPTION_RULE)
+        return
     offending = (
         op.get_bind()
         .execute(

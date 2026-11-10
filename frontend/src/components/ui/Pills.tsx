@@ -17,11 +17,21 @@ export function StatusPill({ status, className }: { status: JobStatus; className
   );
 }
 
-export function StagePill({ stage, className }: { stage: ApplicationStage; className?: string }) {
+/** A stage in its colour. `label` replaces the recruiter's stage name — the candidate
+ * side words stages its own way (see CandidateStagePill). */
+export function StagePill({
+  stage,
+  label,
+  className,
+}: {
+  stage: ApplicationStage;
+  label?: string;
+  className?: string;
+}) {
   return (
     <span className={cx("pill", `pill-${stage}`, className)}>
       <span className="pill-dot" aria-hidden="true" />
-      {humanize(stage)}
+      {label ?? humanize(stage)}
     </span>
   );
 }

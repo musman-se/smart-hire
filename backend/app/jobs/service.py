@@ -9,6 +9,7 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.schemas import contains_pattern
 from app.jobs.enums import JobStatus
 from app.jobs.errors import JobNotFoundError, JobNotOpenError
 from app.jobs.models import Job
@@ -66,16 +67,32 @@ async def list_jobs(
         # Served by the unique index on skills.name and the job_skills primary key.
         filters.append(Job.skill_set.any(Skill.name == skill.strip().lower()))
     if search:
-        filters.append(Job.title.ilike(f"%{search.strip()}%"))
+        filters.append(Job.title.ilike(contains_pattern(search.strip()), escape="\\"))
 
     # Counted with the same filters but without limit/offset, so `total` describes the
     # whole result set rather than the page.
     total = await session.scalar(select(func.count()).select_from(Job).where(*filters)) or 0
 
     rows = await session.scalars(
-        select(Job).where(*filters).order_by(Job.created_at.desc()).limit(limit).offset(offset)
+        select(Job)
+        .where(*filters)
+        # id breaks ties: rows created in one transaction share created_at, and without
+        # a total order a row could appear on two pages, or on none.
+        .order_by(Job.created_at.desc(), Job.id.desc())
+        .limit(limit)
+        .offset(offset)
     )
     return list(rows), total
+
+
+async def count_by_status(session: AsyncSession) -> dict[JobStatus, int]:
+    """How many jobs are in each status — every status, zero included. One GROUP BY,
+    where the console used to send one count request per status."""
+    counts = dict.fromkeys(JobStatus, 0)
+    rows = await session.execute(select(Job.status, func.count()).group_by(Job.status))
+    for status, count in rows.tuples():
+        counts[status] = count
+    return counts
 
 
 async def create_job(session: AsyncSession, payload: JobCreate) -> Job:
@@ -87,7 +104,18 @@ async def create_job(session: AsyncSession, payload: JobCreate) -> Job:
     return job
 
 
-async def update_job(session: AsyncSession, job_id: uuid.UUID, payload: JobUpdate) -> Job:
+def _content(job: Job) -> tuple[str, str, list[str]]:
+    """What the publishing workflow analyses: a change here means the job's extracted
+    content is out of date."""
+    return job.title, job.description, sorted(job.required_skills)
+
+
+async def update_job(
+    session: AsyncSession, job_id: uuid.UUID, payload: JobUpdate
+) -> tuple[Job, bool]:
+    """The updated job, and whether its analysed content actually changed — a form that
+    sends every field on every save must not restart the analysis for nothing.
+    """
     # Locked, like every other read-decide-write on a job: without it, a publish or a
     # close committed between this read and the write below would not stop the edit.
     job = await get_job(session, job_id, lock=True)
@@ -101,14 +129,22 @@ async def update_job(session: AsyncSession, job_id: uuid.UUID, payload: JobUpdat
 
     # exclude_unset is what makes this a PATCH: a field the client did not send is left
     # alone, rather than being overwritten with the schema default.
+    before = _content(job)
     changes = payload.model_dump(exclude_unset=True)
     if "required_skills" in changes:
-        job.skill_set = await resolve_skills(session, changes.pop("required_skills") or [])
+        skills = changes.pop("required_skills") or []
+        if sorted(skills) != sorted(job.required_skills):
+            job.skill_set = await resolve_skills(session, skills)
+            # Skills live in job_skills, so changing only them would issue no UPDATE on
+            # jobs and updated_at would not move. Set from the database's clock, like
+            # every other updated_at — the console compares it with Temporal's times.
+            job.updated_at = func.now()
     for field, value in changes.items():
         setattr(job, field, value)
 
+    content_changed = _content(job) != before
     await session.commit()
-    return job
+    return job, content_changed
 
 
 async def close_job(session: AsyncSession, job_id: uuid.UUID) -> Job:

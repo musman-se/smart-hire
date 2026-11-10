@@ -63,6 +63,8 @@ export function SkillFilter({
         setActive((current) => Math.max(current - 1, -1));
         break;
       case "Enter":
+        // Enter that confirms an IME composition (Japanese, Chinese…) is not a pick.
+        if (event.nativeEvent.isComposing) return;
         event.preventDefault();
         commit(options[active] ?? draft);
         break;

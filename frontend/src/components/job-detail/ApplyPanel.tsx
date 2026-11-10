@@ -8,13 +8,15 @@ import {
   MAX_ACTIVE_APPLICATIONS,
   TERMINAL_STAGES,
   type Application,
-  type ApplicationStage,
   type Candidate,
   type Job,
 } from "../../api/types";
-import { keys, useApplicationHistory, useApplyToJob, useWithdrawApplication } from "../../hooks/queries";
+import { keys, useApplicationHistory, useApplyToJob } from "../../hooks/queries";
 import { useMyApplications } from "../../hooks/useCandidateExtras";
 import { useIdempotencyKey } from "../../hooks/useIdempotencyKey";
+import { CandidateStagePill } from "../candidate/CandidateStagePill";
+import { STAGE_COPY } from "../candidate/stageCopy";
+import { useWithdraw } from "../candidate/useWithdraw";
 import { CardError } from "../dashboard/parts";
 import {
   Button,
@@ -26,7 +28,6 @@ import {
   Notice,
   ProgressBar,
   SkeletonText,
-  StagePill,
   StageStepper,
   Textarea,
   eligibility,
@@ -34,20 +35,7 @@ import {
   formatRelative,
   pluralize,
   stoppedAt,
-  useConfirm,
-  useToast,
 } from "../ui";
-
-/** What each stage means, told to the person waiting on it. */
-const STAGE_COPY: Record<ApplicationStage, string> = {
-  applied: "Your application is in. The hiring team reviews new applications in order.",
-  screening: "The team is reviewing your profile against the role.",
-  interview: "You are through to interviews — watch your email for scheduling.",
-  offer: "You have an offer. The team will be in touch with the details.",
-  hired: "Congratulations — you were hired for this role.",
-  rejected: "The team decided not to go ahead this time. Other roles may suit you better.",
-  withdrawn: "You withdrew this application. You cannot apply to this job again.",
-};
 
 /**
  * The server words these refusals for operators ("the candidate", a job id). An
@@ -138,7 +126,14 @@ export function ApplyPanel({ job, candidate, profileError, onRetryProfile }: App
 
   const existing = mine.data?.items.find((application) => application.job_id === job.id) ?? submitted;
   if (existing) {
-    return <AppliedCard application={existing} justApplied={submitted !== null} email={candidate.email} />;
+    return (
+      <AppliedCard
+        application={existing}
+        jobTitle={job.title}
+        justApplied={submitted !== null}
+        email={candidate.email}
+      />
+    );
   }
 
   if (job.status !== "published") {
@@ -316,28 +311,23 @@ function ApplyForm({
   );
 }
 
-function AppliedCard({ application, justApplied, email }: { application: Application; justApplied: boolean; email: string }) {
+function AppliedCard({
+  application,
+  jobTitle,
+  justApplied,
+  email,
+}: {
+  application: Application;
+  jobTitle: string;
+  justApplied: boolean;
+  email: string;
+}) {
   const terminal = TERMINAL_STAGES.has(application.stage);
   // Where a closed application stopped is in its history; candidates may read their own.
   const { data: history } = useApplicationHistory(application.id, terminal);
-  const withdraw = useWithdrawApplication();
-  const confirm = useConfirm();
-  const toast = useToast();
-
-  async function withdrawApplication() {
-    const ok = await confirm({
-      title: "Withdraw your application?",
-      body: "The team will stop considering you for this role, and you cannot apply to it again. It frees one of your active application slots.",
-      confirmLabel: "Withdraw",
-      cancelLabel: "Keep it",
-      tone: "danger",
-    });
-    if (!ok) return;
-    withdraw.mutate(application.id, {
-      onSuccess: () => toast.success("Application withdrawn"),
-      onError: (error) => toast.error(error),
-    });
-  }
+  // The same confirmation and outcome as My applications, so withdrawing reads alike.
+  const { withdraw, pendingId } = useWithdraw();
+  const copy = STAGE_COPY[application.stage];
 
   return (
     <Card className="job-detail-apply">
@@ -354,12 +344,14 @@ function AppliedCard({ application, justApplied, email }: { application: Applica
       ) : (
         <div className="row-between">
           <h2 className="job-detail-apply-title">Your application</h2>
-          <StagePill stage={application.stage} />
+          <CandidateStagePill stage={application.stage} />
         </div>
       )}
 
       <StageStepper stage={application.stage} stoppedAt={stoppedAt(history)} />
-      <p className="text-sm">{STAGE_COPY[application.stage]}</p>
+      <p className="text-sm">
+        <strong>{copy.headline}.</strong> {copy.next}
+      </p>
       <p className="text-xs subtle" title={formatDateTime(application.created_at)}>
         Applied {formatRelative(application.created_at)}
         {application.updated_at !== application.created_at && ` · updated ${formatRelative(application.updated_at)}`}
@@ -381,7 +373,12 @@ function AppliedCard({ application, justApplied, email }: { application: Applica
           </ButtonLink>
         )}
         {!terminal && !justApplied && (
-          <Button variant="ghost" block loading={withdraw.isPending} onClick={withdrawApplication}>
+          <Button
+            variant="ghost"
+            block
+            loading={pendingId === application.id}
+            onClick={() => void withdraw(application.id, jobTitle)}
+          >
             Withdraw application
           </Button>
         )}

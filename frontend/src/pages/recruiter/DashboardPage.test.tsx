@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,17 +13,45 @@ const api = vi.hoisted(() => ({
   jobsList: vi.fn(),
   jobsGet: vi.fn(),
   jobsPublish: vi.fn(),
+  statusCounts: vi.fn(),
   applicationsList: vi.fn(),
+  stageCounts: vi.fn(),
+  jobCounts: vi.fn(),
+  candidatesList: vi.fn(),
   candidatesGet: vi.fn(),
+  recruiterMe: vi.fn(),
 }));
 
 vi.mock("../../api/resources", () => ({
-  jobsApi: { list: api.jobsList, get: api.jobsGet, publish: api.jobsPublish },
-  applicationsApi: { list: api.applicationsList, process: vi.fn() },
-  candidatesApi: { get: api.candidatesGet },
+  MAX_IDS_PER_REQUEST: 100,
+  jobsApi: {
+    list: api.jobsList,
+    get: api.jobsGet,
+    publish: api.jobsPublish,
+    statusCounts: api.statusCounts,
+  },
+  applicationsApi: {
+    list: api.applicationsList,
+    process: vi.fn(),
+    stageCounts: api.stageCounts,
+    jobCounts: api.jobCounts,
+  },
+  candidatesApi: { list: api.candidatesList, get: api.candidatesGet },
+  recruitersApi: { me: api.recruiterMe },
   skillsApi: { list: vi.fn() },
   healthApi: { ready: vi.fn() },
 }));
+
+const NO_JOBS = { draft: 0, processing: 0, published: 0, publish_failed: 0, closed: 0 };
+const NO_APPLICATIONS = {
+  applied: 0,
+  screening: 0,
+  interview: 0,
+  offer: 0,
+  hired: 0,
+  rejected: 0,
+  withdrawn: 0,
+};
 
 vi.mock("../../auth/AuthProvider", () => ({
   useUser: () => ({ id: "u1", email: "sara.khan@example.com", role: "recruiter", created_at: "" }),
@@ -76,7 +104,13 @@ function renderPage() {
 }
 
 describe("DashboardPage", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.recruiterMe.mockReturnValue(new Promise(() => {})); // still loading: the email's name
+    api.statusCounts.mockResolvedValue(NO_JOBS);
+    api.stageCounts.mockResolvedValue(NO_APPLICATIONS);
+    api.jobCounts.mockResolvedValue({});
+  });
 
   it("shows the way to a first job in an empty workspace", async () => {
     api.jobsList.mockImplementation(() => page([]));
@@ -89,18 +123,47 @@ describe("DashboardPage", () => {
     expect(screen.queryByText("Needs attention")).not.toBeInTheDocument();
   });
 
+  it("greets the recruiter by the name on their profile", async () => {
+    api.jobsList.mockImplementation(() => page([]));
+    api.applicationsList.mockImplementation(() => page([]));
+    api.recruiterMe.mockResolvedValue({ full_name: "Ayesha Siddiqui", title: null });
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/, Ayesha$/),
+    );
+  });
+
+  it("reads its totals from the count endpoints, not one request per status or stage", async () => {
+    api.jobsList.mockImplementation(() => page([]));
+    api.applicationsList.mockImplementation(() => page([]));
+
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Post your first job" });
+    expect(api.statusCounts).toHaveBeenCalledTimes(1);
+    expect(api.stageCounts).toHaveBeenCalledTimes(1);
+    // Only the newest-100 sample: no limit=1 counting reads.
+    expect(api.applicationsList.mock.calls.every(([filters]) => filters.limit !== 1)).toBe(true);
+  });
+
   it("lists what needs attention and retries a failed publish", async () => {
     api.jobsList.mockImplementation((filters: JobFilters) => {
       if (filters.status === "publish_failed") return page([failedJob]);
       if (filters.status === "published") return page([openJob]);
       return page([], 0);
     });
-    api.applicationsList.mockImplementation((filters: ApplicationFilters) => {
-      if (filters.limit === 1) return page([], filters.stage === "applied" || !filters.stage ? 1 : 0);
-      return page([waitingApplication]);
-    });
+    api.statusCounts.mockResolvedValue({ ...NO_JOBS, publish_failed: 1, published: 1 });
+    api.stageCounts.mockResolvedValue({ ...NO_APPLICATIONS, applied: 1 });
+    api.applicationsList.mockImplementation((_filters: ApplicationFilters) => page([waitingApplication]));
     api.jobsGet.mockImplementation((id: string) => Promise.resolve(id === "job-a" ? openJob : failedJob));
-    api.candidatesGet.mockResolvedValue({ id: "cand-1", full_name: "Omar Farooq" } as Candidate);
+    api.candidatesList.mockResolvedValue({
+      items: [{ id: "cand-1", full_name: "Omar Farooq" } as Candidate],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    });
     api.jobsPublish.mockResolvedValue({ ...failedJob, status: "processing" });
 
     renderPage();

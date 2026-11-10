@@ -814,6 +814,14 @@
   box-shadow: none;
 }
 
+/* Shown only while something typed cannot be added: the list is full. */
+.tag-input-limit {
+  flex-basis: 100%;
+  padding: 0 var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--color-warning-text);
+}
+
 /* Listbox under an input — TagInput suggestions; reusable by any combobox. */
 .listbox {
   position: absolute;

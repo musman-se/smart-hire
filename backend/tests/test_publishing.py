@@ -169,7 +169,7 @@ async def test_job_being_processed_cannot_be_edited_or_applied_to(
 
     # Leave the job in PROCESSING: a publisher that accepts the start and does nothing,
     # as if the worker had not picked the task up yet.
-    async def accept_only(job_id: uuid.UUID) -> None:
+    async def accept_only(job_id: uuid.UUID, **_: object) -> None:
         publisher.starts.append(job_id)
 
     publisher.start = accept_only  # type: ignore[method-assign]
@@ -191,7 +191,7 @@ async def test_publishing_a_processing_job_starts_a_fresh_run(
     was lost to an outage is healed by publishing it again."""
     job = await make_job(client, publish=False)
 
-    async def accept_only(job_id: uuid.UUID) -> None:
+    async def accept_only(job_id: uuid.UUID, **_: object) -> None:
         publisher.starts.append(job_id)
 
     publisher.start = accept_only  # type: ignore[method-assign]
@@ -236,7 +236,7 @@ async def test_closing_mid_publish_is_not_undone_by_the_workflow(
     stays closed."""
     job = await make_job(client, publish=False)
 
-    async def accept_only(job_id: uuid.UUID) -> None:
+    async def accept_only(job_id: uuid.UUID, **_: object) -> None:
         publisher.starts.append(job_id)
 
     publisher.start = accept_only  # type: ignore[method-assign]

@@ -107,3 +107,10 @@ describe("normalizeSkill", () => {
     expect(normalizeSkill("  FastAPI ")).toBe("fastapi");
   });
 });
+
+describe("validateStep — skill list", () => {
+  it("caps the number of skills at the server's limit", () => {
+    const skills = Array.from({ length: LIMITS.skillsMax + 1 }, (_, i) => `skill-${i}`);
+    expect(validateStep("profile", draft({ skills })).skills).toMatch(/at most 50 skills/);
+  });
+});

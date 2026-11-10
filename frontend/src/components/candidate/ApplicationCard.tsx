@@ -4,13 +4,13 @@ import {
   DropdownMenu,
   Icon,
   IconButton,
-  StagePill,
   StageStepper,
   formatDateTime,
   formatRelative,
   type MenuEntry,
 } from "../ui";
 import { isActive } from "./applications";
+import { CandidateStagePill } from "./CandidateStagePill";
 import { JobMeta } from "./JobMeta";
 import { JobTitle } from "./JobTitle";
 import { STAGE_COPY } from "./stageCopy";
@@ -79,7 +79,7 @@ export function ApplicationCard({
               Role closed
             </Badge>
           )}
-          <StagePill stage={application.stage} />
+          <CandidateStagePill stage={application.stage} />
           <DropdownMenu
             align="end"
             aria-label={actionsLabel}

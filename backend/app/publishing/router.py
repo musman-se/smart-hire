@@ -25,13 +25,20 @@ router = APIRouter(dependencies=[Depends(require_recruiter)])
     description=(
         "Starts the publishing workflow and returns at once with the job in `processing`. "
         "It becomes `published` when skills and content have been extracted, or "
-        "`publish_failed` with a reason. Follow progress at `/jobs/{job_id}/publication`."
+        "`publish_failed` with a reason. Follow progress at `/jobs/{job_id}/publication`. "
+        "On a job that is already published it re-runs the analysis; the job stays "
+        "published."
     ),
     responses={
         409: {"model": ErrorResponse, "description": "The job is closed"},
         503: {
             "model": ErrorResponse,
-            "description": "The workflow engine is unreachable; nothing was changed",
+            "description": (
+                "`workflow_unavailable`: the workflow engine is unreachable, nothing was "
+                "changed. `workflow_start_unknown`: it did not answer in time — the run "
+                "may have started, so the job stays `processing`; publish again if it "
+                "is still stuck."
+            ),
         },
     },
 )

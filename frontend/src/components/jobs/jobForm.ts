@@ -4,12 +4,12 @@
  * mapping to the API's create and update payloads.
  */
 
-import type { EmploymentType, Job, JobCreate, JobUpdate } from "../../api/types";
+import { MAX_SKILLS, type EmploymentType, type Job, type JobCreate, type JobUpdate } from "../../api/types";
+import { codePointLength } from "../auth/validation";
 
 /**
- * Mirrors backend/app/jobs/schemas.py and models.py. The browser counts UTF-16 units
- * and the server characters, so an emoji costs two here: the form can only be stricter
- * than the server, never looser.
+ * Mirrors backend/app/jobs/schemas.py and models.py. Lengths are counted the way the
+ * server counts them, in characters (codePointLength), so an emoji costs one.
  */
 export const JOB_LIMITS = {
   titleMin: 3,
@@ -19,6 +19,7 @@ export const JOB_LIMITS = {
   departmentMax: 100,
   locationMax: 120,
   skillMax: 64,
+  skillsMax: MAX_SKILLS,
   experienceMax: 50,
   capacityMax: 100_000,
 } as const;
@@ -76,7 +77,7 @@ export function jobToFormValues(job: Job): JobFormValues {
 const WHOLE_NUMBER = /^\d+$/;
 
 function lengthError(value: string, label: string, min: number, max: number): string | undefined {
-  const length = value.trim().length;
+  const length = codePointLength(value.trim());
   if (length === 0) return `${label} is required.`;
   if (length < min) return `${label} needs at least ${min} characters.`;
   if (length > max) return `${label} can be at most ${max.toLocaleString()} characters.`;
@@ -84,7 +85,7 @@ function lengthError(value: string, label: string, min: number, max: number): st
 }
 
 function maxLengthError(value: string, label: string, max: number): string | undefined {
-  return value.trim().length > max ? `${label} can be at most ${max} characters.` : undefined;
+  return codePointLength(value.trim()) > max ? `${label} can be at most ${max} characters.` : undefined;
 }
 
 export function validateJobForm(values: JobFormValues): JobFormErrors {
@@ -106,8 +107,12 @@ export function validateJobForm(values: JobFormValues): JobFormErrors {
   set("department", maxLengthError(values.department, "Department", JOB_LIMITS.departmentMax));
   set("location", maxLengthError(values.location, "Location", JOB_LIMITS.locationMax));
 
-  const longSkill = values.required_skills.find((skill) => skill.length > JOB_LIMITS.skillMax);
-  if (longSkill) {
+  const longSkill = values.required_skills.find(
+    (skill) => codePointLength(skill) > JOB_LIMITS.skillMax,
+  );
+  if (values.required_skills.length > JOB_LIMITS.skillsMax) {
+    set("required_skills", `List at most ${JOB_LIMITS.skillsMax} skills — remove ${values.required_skills.length - JOB_LIMITS.skillsMax}.`);
+  } else if (longSkill) {
     set("required_skills", `Skill names can be at most ${JOB_LIMITS.skillMax} characters.`);
   }
 

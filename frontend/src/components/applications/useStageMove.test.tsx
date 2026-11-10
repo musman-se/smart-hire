@@ -63,7 +63,9 @@ describe("useStageMove", () => {
     advance.mockResolvedValue({ ...application, stage: "rejected" });
     await openDialog("rejected");
 
-    await userEvent.type(screen.getByRole("textbox", { name: /reason/i }), "Needs on-call experience");
+    // Pasted, not typed: typing long text key by key times out on a loaded machine.
+    await userEvent.click(screen.getByRole("textbox", { name: /reason/i }));
+    await userEvent.paste("Needs on-call experience");
     await userEvent.click(screen.getByRole("button", { name: "Reject" }));
 
     expect(advance).toHaveBeenCalledWith("app-1", "rejected", "Needs on-call experience");
@@ -79,5 +81,47 @@ describe("useStageMove", () => {
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("cannot be dismissed while the move is in flight, so a refusal is never lost", async () => {
+    let refuse!: (error: Error) => void;
+    advance.mockReturnValue(new Promise((_, reject) => (refuse = reject)));
+    await openDialog("interview");
+
+    await userEvent.click(screen.getByRole("button", { name: "Move to Interview" }));
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /close/i })).toBeNull();
+
+    refuse(new Error("Someone else moved it first"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Someone else moved it first");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    // Answered: Escape works again.
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("still reports a refusal when the recruiter has left the page meanwhile", async () => {
+    let refuse!: (error: Error) => void;
+    advance.mockReturnValue(new Promise((_, reject) => (refuse = reject)));
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+
+    function Page({ showBoard }: { showBoard: boolean }) {
+      return (
+        <QueryClientProvider client={client}>
+          <ToastProvider>{showBoard ? <Harness stage="interview" /> : <p>Elsewhere</p>}</ToastProvider>
+        </QueryClientProvider>
+      );
+    }
+    const { rerender } = render(<Page showBoard />);
+    await userEvent.click(screen.getByRole("button", { name: "Open" }));
+    await userEvent.click(screen.getByRole("button", { name: "Move to Interview" }));
+
+    // The board goes away (the recruiter navigated), then the server refuses.
+    rerender(<Page showBoard={false} />);
+    refuse(new Error("Someone else moved it first"));
+
+    expect(await screen.findByText(/Ayesha Khan was not moved/)).toBeInTheDocument();
   });
 });

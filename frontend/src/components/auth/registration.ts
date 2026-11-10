@@ -1,4 +1,4 @@
-import type { CandidateRegistration } from "../../api/types";
+import { MAX_SKILLS, type CandidateRegistration } from "../../api/types";
 import { looksLikePhone } from "../../lib/phone";
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "./password";
 import { FULL_NAME_LIMITS, codePointLength, looksLikeEmail, type FieldErrors } from "./validation";
@@ -12,6 +12,7 @@ export const LIMITS = {
   phoneMax: 32,
   yearsMax: 60,
   skillMax: 64,
+  skillsMax: MAX_SKILLS,
 } as const;
 
 export const REGISTRATION_STEPS = ["account", "profile"] as const;
@@ -110,6 +111,7 @@ const RULES: Record<RegistrationField, Rule> = {
     if (years < 0 || years > LIMITS.yearsMax) return `Enter a number from 0 to ${LIMITS.yearsMax}`;
   },
   skills: ({ skills }) => {
+    if (skills.length > LIMITS.skillsMax) return `List at most ${LIMITS.skillsMax} skills`;
     const tooLong = skills.find((skill) => codePointLength(skill) > LIMITS.skillMax);
     if (tooLong) return `Skill names are at most ${LIMITS.skillMax} characters: "${tooLong.slice(0, 20)}…"`;
   },
